@@ -31,9 +31,12 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      version: ${{ steps.release.outputs.version }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      # release-please runs in manifest mode with the package rooted at `src/`, so its
+      # per-package outputs are PATH-PREFIXED (`src--*`). The un-prefixed names only exist
+      # for a root (".") package — reading them left the publish job silently skipped.
+      release_created: ${{ steps.release.outputs['src--release_created'] }}
+      version: ${{ steps.release.outputs['src--version'] }}
+      tag_name: ${{ steps.release.outputs['src--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
