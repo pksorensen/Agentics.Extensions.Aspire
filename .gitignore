@@ -1,0 +1,21 @@
+## .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+
+## Packaging output
+packages/
+*.nupkg
+*.snupkg
+
+## IDE
+.vs/
+.idea/
+*.DotSettings.user
+
+## OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared metadata (TFM, versioning, packaging) lives in ../Directory.Build.props. -->
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.Terminal</PackageId>
+    <Description>Aspire hosting integration that runs a terminal app in the browser via ttyd and xterm.js. Builds a local Go source tree or downloads a prebuilt CLI from the agentics.dk install store.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="viewer.html" />
+  </ItemGroup>
+
+</Project>

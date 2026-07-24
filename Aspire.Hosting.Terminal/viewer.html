@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
+    #terminal { width: 100%; height: 100%; }
+
+    #copy-btn {
+      position: fixed; top: 8px; right: 8px; z-index: 100;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+      color: #d4d4d4; font-family: monospace; font-size: 12px;
+      padding: 4px 10px; border-radius: 4px; cursor: pointer;
+      transition: background 0.15s;
+    }
+    #copy-btn:hover { background: rgba(255,255,255,0.16); }
+    #copy-btn.copied { color: #4ec9b0; border-color: #4ec9b0; }
+
+    /* Link toast container — bottom-right, stacks upward */
+    #link-toasts {
+      position: fixed; bottom: 16px; right: 16px; z-index: 200;
+      display: flex; flex-direction: column-reverse; gap: 8px;
+      max-width: 480px;
+    }
+
+    .link-toast {
+      display: flex; align-items: center; gap: 8px;
+      background: #252526; border: 1px solid rgba(255,255,255,0.15);
+      border-left: 3px solid #4ec9b0;
+      border-radius: 4px; padding: 8px 10px;
+      font-family: monospace; font-size: 12px; color: #d4d4d4;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      animation: toast-in 0.15s ease-out;
+      overflow: hidden; position: relative;
+    }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateX(20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    .link-toast.removing {
+      animation: toast-out 0.2s ease-in forwards;
+    }
+    @keyframes toast-out {
+      from { opacity: 1; transform: translateX(0); max-height: 80px; margin-bottom: 0; }
+      to   { opacity: 0; transform: translateX(20px); max-height: 0; margin-bottom: -8px; padding: 0; }
+    }
+
+    .link-toast-icon { font-size: 14px; flex-shrink: 0; }
+
+    .link-toast-url {
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #9cdcfe;
+    }
+
+    .link-toast-open {
+      flex-shrink: 0;
+      background: rgba(78,201,176,0.15); border: 1px solid rgba(78,201,176,0.4);
+      color: #4ec9b0; font-family: monospace; font-size: 11px;
+      padding: 2px 8px; border-radius: 3px; cursor: pointer; text-decoration: none;
+      white-space: nowrap;
+      transition: background 0.1s;
+    }
+    .link-toast-open:hover { background: rgba(78,201,176,0.25); }
+
+    .link-toast-close {
+      flex-shrink: 0; background: none; border: none;
+      color: rgba(255,255,255,0.3); font-size: 14px; cursor: pointer; padding: 0 2px;
+      line-height: 1;
+    }
+    .link-toast-close:hover { color: rgba(255,255,255,0.7); }
+
+    /* GitHub device code dialog */
+    #device-code-dialog {
+      display: none;
+      position: fixed; inset: 0; z-index: 300;
+      background: rgba(0,0,0,0.72);
+      backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    #device-code-dialog.visible { display: flex; }
+
+    #device-code-box {
+      position: relative;
+      background: #111; border: 1px solid #333;
+      border-radius: 10px; padding: 24px;
+      width: 340px; max-width: calc(100vw - 32px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+    }
+
+    #device-code-close {
+      position: absolute; top: 10px; right: 10px;
+      background: none; border: none; color: #666;
+      font-size: 16px; cursor: pointer; width: 24px; height: 24px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 4px;
+    }
+    #device-code-close:hover { background: #222; color: #ccc; }
+
+    #device-code-header {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 6px;
+    }
+    #device-code-header svg { width: 18px; height: 18px; fill: #ccc; flex-shrink: 0; }
+    #device-code-header span { font-family: sans-serif; font-size: 14px; font-weight: 600; color: #fff; }
+
+    #device-code-hint {
+      font-family: sans-serif; font-size: 12px; color: #888;
+      margin-bottom: 16px;
+    }
+
+    #device-code-value-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: #0d1117; border-radius: 6px;
+      padding: 12px 16px; margin-bottom: 14px;
+    }
+    #device-code-value {
+      font-family: monospace; font-size: 28px; font-weight: 700;
+      letter-spacing: 0.15em; color: #58a6ff;
+    }
+    #device-code-copy {
+      background: none; border: 1px solid #333;
+      color: #888; font-family: monospace; font-size: 11px;
+      padding: 3px 10px; border-radius: 4px; cursor: pointer;
+    }
+    #device-code-copy:hover { background: #222; color: #ccc; }
+    #device-code-copy.copied { color: #4ec9b0; border-color: #4ec9b0; }
+
+    #device-code-open {
+      display: block; width: 100%; text-align: center;
+      background: #238636; border-radius: 6px;
+      padding: 9px 16px; color: #fff;
+      font-family: sans-serif; font-size: 13px; font-weight: 600;
+      text-decoration: none; cursor: pointer; border: none;
+    }
+    #device-code-open:hover { background: #2ea043; }
+
+    /* Countdown bar at bottom of each toast */
+    .link-toast-bar {
+      position: absolute; bottom: 0; left: 0; height: 2px;
+      background: rgba(78,201,176,0.4);
+      animation: toast-bar linear forwards;
+    }
+    @keyframes toast-bar {
+      from { width: 100%; }
+      to   { width: 0%; }
+    }
+  </style>
+</head>
+<body>
+  <button id="copy-btn" title="Copy terminal output">Copy</button>
+  <div id="link-toasts"></div>
+  <div id="device-code-dialog">
+    <div id="device-code-box">
+      <button id="device-code-close" title="Dismiss">✕</button>
+      <div id="device-code-header">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span>GitHub Authentication</span>
+      </div>
+      <p id="device-code-hint">Open the link and enter this code to authorize the runner.</p>
+      <div id="device-code-value-row">
+        <span id="device-code-value"></span>
+        <button id="device-code-copy">Copy</button>
+      </div>
+      <a id="device-code-open" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer">Open GitHub Device Login</a>
+    </div>
+  </div>
+  <div id="terminal"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script>
+    (function () {
+      // ttyd protocol constants (ASCII digits)
+      var OUTPUT   = 0x30; // '0' — server → client terminal data
+      var SET_TITLE = 0x31; // '1' — server → client set window title
+      var INPUT    = 0x30; // '0' — client → server keyboard input
+      var RESIZE   = 0x31; // '1' — client → server resize {columns, rows}
+
+      var TOAST_DURATION = 12000; // ms before auto-dismiss
+
+      // URLs we've already toasted — avoid repeating the same link
+      var seenUrls = new Set();
+
+      // Device code detection
+      var DEVICE_CODE_RE = /\b([A-Z0-9]{4}-[A-Z0-9]{4})\b/;
+      var DEVICE_URL_RE = /https:\/\/github\.com\/login\/device[^\s]*/;
+      var termTextBuffer = '';
+      var deviceCodeShown = false;
+
+      var deviceCodeDialog = document.getElementById('device-code-dialog');
+      var deviceCodeValue  = document.getElementById('device-code-value');
+      var deviceCodeCopy   = document.getElementById('device-code-copy');
+      var deviceCodeOpen   = document.getElementById('device-code-open');
+      var deviceCodeClose  = document.getElementById('device-code-close');
+
+      function dismissDeviceCodeDialog() {
+        deviceCodeDialog.classList.remove('visible');
+        deviceCodeShown = false;
+        termTextBuffer = '';
+      }
+
+      deviceCodeClose.addEventListener('click', dismissDeviceCodeDialog);
+
+      deviceCodeCopy.addEventListener('click', function () {
+        navigator.clipboard.writeText(deviceCodeValue.textContent || '').then(function () {
+          deviceCodeCopy.textContent = 'Copied!';
+          deviceCodeCopy.classList.add('copied');
+          setTimeout(function () { deviceCodeCopy.textContent = 'Copy'; deviceCodeCopy.classList.remove('copied'); }, 1500);
+        });
+      });
+
+      // "Open" button: copy code + open tab + auto-close dialog
+      deviceCodeOpen.addEventListener('click', function (e) {
+        e.preventDefault();
+        var url = deviceCodeOpen.href;
+        navigator.clipboard.writeText(deviceCodeValue.textContent || '').catch(function () {});
+        window.open(url, '_blank', 'noopener,noreferrer');
+        setTimeout(dismissDeviceCodeDialog, 400);
+      });
+
+      function detectDeviceCode(text) {
+        if (deviceCodeShown) return;
+        var clean = stripAnsi(text);
+        termTextBuffer = (termTextBuffer + clean).slice(-800);
+        var codeMatch = termTextBuffer.match(DEVICE_CODE_RE);
+        if (!codeMatch) return;
+        var urlMatch = termTextBuffer.match(DEVICE_URL_RE);
+        deviceCodeShown = true;
+        deviceCodeValue.textContent = codeMatch[1];
+        var loginUrl = urlMatch ? urlMatch[0] : 'https://github.com/login/device';
+        deviceCodeOpen.href = loginUrl;
+        deviceCodeDialog.classList.add('visible');
+      }
+
+      // Strip ANSI/VT escape sequences from a string
+      var ANSI_RE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|[^[])/g;
+      function stripAnsi(s) { return s.replace(ANSI_RE, ''); }
+
+      // Match URLs in terminal text (https:// or http://)
+      var URL_RE = /https?:\/\/[^\s\x07\r\n\]"'<>\\]+/g;
+
+      function detectUrls(text) {
+        var clean = stripAnsi(text);
+        var matches = clean.match(URL_RE);
+        if (!matches) return;
+        matches.forEach(function (url) {
+          // Trim trailing punctuation that's likely not part of the URL
+          url = url.replace(/[.,;:!?)\]}>]+$/, '');
+          if (!seenUrls.has(url)) {
+            seenUrls.add(url);
+            showLinkToast(url);
+          }
+        });
+      }
+
+      function showLinkToast(url) {
+        var container = document.getElementById('link-toasts');
+
+        var toast = document.createElement('div');
+        toast.className = 'link-toast';
+
+        var icon = document.createElement('span');
+        icon.className = 'link-toast-icon';
+        icon.textContent = '🔗';
+
+        var urlSpan = document.createElement('span');
+        urlSpan.className = 'link-toast-url';
+        urlSpan.textContent = url;
+        urlSpan.title = url;
+
+        var openLink = document.createElement('a');
+        openLink.className = 'link-toast-open';
+        openLink.textContent = 'Open';
+        openLink.href = url;
+        openLink.target = '_blank';
+        openLink.rel = 'noopener noreferrer';
+
+        var closeBtn = document.createElement('button');
+        closeBtn.className = 'link-toast-close';
+        closeBtn.textContent = '×';
+        closeBtn.title = 'Dismiss';
+
+        var bar = document.createElement('div');
+        bar.className = 'link-toast-bar';
+        bar.style.animationDuration = TOAST_DURATION + 'ms';
+
+        toast.appendChild(icon);
+        toast.appendChild(urlSpan);
+        toast.appendChild(openLink);
+        toast.appendChild(closeBtn);
+        toast.appendChild(bar);
+        container.appendChild(toast);
+
+        function dismiss() {
+          toast.classList.add('removing');
+          toast.addEventListener('animationend', function () {
+            if (toast.parentNode) toast.parentNode.removeChild(toast);
+          }, { once: true });
+        }
+
+        closeBtn.addEventListener('click', dismiss);
+        // Also dismiss on open (user clicked the link)
+        openLink.addEventListener('click', function () {
+          setTimeout(dismiss, 300);
+        });
+
+        var timer = setTimeout(dismiss, TOAST_DURATION);
+
+        // Pause auto-dismiss on hover
+        toast.addEventListener('mouseenter', function () { clearTimeout(timer); bar.style.animationPlayState = 'paused'; });
+        toast.addEventListener('mouseleave', function () {
+          bar.style.animationPlayState = 'running';
+          timer = setTimeout(dismiss, 2000); // short grace after hover
+        });
+      }
+
+      // ── Terminal setup ───────────────────────────────────────────────
+      var term = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        theme: {
+          background: '#1e1e1e',
+          foreground: '#d4d4d4',
+          cursor:     '#d4d4d4',
+        },
+      });
+
+      var fitAddon = new FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(document.getElementById('terminal'));
+      fitAddon.fit();
+
+      // Copy button
+      document.getElementById('copy-btn').addEventListener('click', function () {
+        var rows = document.querySelectorAll('.xterm-rows > div');
+        var lines = [];
+        rows.forEach(function (row) { lines.push(row.innerText); });
+        while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+        navigator.clipboard.writeText(lines.join('\n')).then(function () {
+          var btn = document.getElementById('copy-btn');
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+        });
+      });
+
+      // ── WebSocket connection ─────────────────────────────────────────
+      fetch('/token')
+        .then(function (r) { return r.json(); })
+        .then(function (data) { connect(data.token || ''); })
+        .catch(function () { connect(''); });
+
+      var decoder = new TextDecoder();
+
+      function connect(authToken) {
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var ws = new WebSocket(proto + '//' + location.host + '/ws', ['tty']);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = function () {
+          ws.send(JSON.stringify({
+            AuthToken: authToken,
+            columns: term.cols,
+            rows: term.rows,
+          }));
+        };
+
+        ws.onmessage = function (ev) {
+          if (!(ev.data instanceof ArrayBuffer)) return;
+          var data = new Uint8Array(ev.data);
+          if (data.length < 1) return;
+
+          switch (data[0]) {
+            case OUTPUT:
+              var chunk = data.slice(1);
+              term.write(chunk);
+              // Scan raw text for URLs and device codes
+              var chunkText = decoder.decode(chunk);
+              detectUrls(chunkText);
+              detectDeviceCode(chunkText);
+              break;
+            case SET_TITLE:
+              document.title = decoder.decode(data.slice(1));
+              break;
+          }
+        };
+
+        ws.onclose = function () {
+          term.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n');
+        };
+
+        term.onData(function (str) {
+          var encoder = new TextEncoder();
+          var payload = encoder.encode(str);
+          var msg = new Uint8Array(1 + payload.length);
+          msg[0] = INPUT;
+          msg.set(payload, 1);
+          ws.send(msg.buffer);
+        });
+
+        term.onResize(function (size) {
+          ws.send(String.fromCharCode(RESIZE) + JSON.stringify({ columns: size.cols, rows: size.rows }));
+        });
+
+        window.addEventListener('resize', function () { fitAddon.fit(); });
+      }
+    })();
+  </script>
+</body>
+</html>

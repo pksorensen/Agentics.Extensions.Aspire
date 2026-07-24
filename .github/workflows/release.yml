@@ -1,0 +1,111 @@
+name: Release
+
+# release-please watches main; Conventional Commits drive the version bump. When its
+# release PR merges, the three Agentics.Extensions.Aspire.* packages are packed and pushed
+# to nuget.org via NuGet.org Trusted Publishing (OIDC) — no long-lived NUGET_API_KEY.
+#
+# One-time setup on nuget.org (Account → Trusted Publishing), for EACH package ID
+# (Agentics.Extensions.Aspire.Terminal / .QrCode / .Testing.Videos):
+#   Publisher:        GitHub Actions
+#   Repository Owner: pksorensen
+#   Repository:       Agentics.Extensions.Aspire
+#   Workflow File:    release.yml
+# The nuget.org username is passed to NuGet/login as plain text (an identifier, not a
+# credential) — see the `user:` input below.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Publish a specific version now (skips release-please). e.g. 0.1.0'
+        required: false
+
+permissions:
+  contents: write        # release-please creates release commits/tags
+  pull-requests: write   # release-please opens/updates the release PR
+  id-token: write        # GitHub OIDC token for NuGet Trusted Publishing
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      version: ${{ steps.release.outputs.version }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    name: Pack & publish to NuGet
+    needs: release-please
+    # Publish when release-please cuts a release, or on a manual dispatch with a version.
+    if: ${{ needs.release-please.outputs.release_created == 'true' || github.event.inputs.version != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Resolve version
+        id: ver
+        run: |
+          V="${{ github.event.inputs.version }}"
+          if [ -z "$V" ]; then V="${{ needs.release-please.outputs.version }}"; fi
+          if [ -z "$V" ]; then V="$(tr -d '[:space:]' < version.txt)"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Publishing version: $V"
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          mkdir -p packages
+          for proj in \
+            Aspire.Hosting.Terminal/Aspire.Hosting.Terminal.csproj \
+            Aspire.Hosting.QrCode/Aspire.Hosting.QrCode.csproj \
+            Aspire.Hosting.Testing.Videos/Aspire.Hosting.Testing.Videos.csproj; do
+            dotnet pack "$proj" \
+              --configuration Release \
+              --output ./packages \
+              -p:PackageVersion=${{ steps.ver.outputs.version }}
+          done
+          ls -la packages
+
+      - name: NuGet login (OIDC → short-lived API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          # nuget.org profile name — a public identifier, not a credential.
+          user: pksorensen
+
+      - name: Push to NuGet.org
+        run: |
+          set -euo pipefail
+          for package in packages/*.nupkg; do
+            echo "Pushing $(basename "$package")..."
+            dotnet nuget push "$package" \
+              --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Agentics.Extensions.Aspire publish"
+            echo ""
+            echo "- **Version:** ${{ steps.ver.outputs.version }}"
+            echo "- **Packages:** Terminal, QrCode, Testing.Videos"
+          } >> "$GITHUB_STEP_SUMMARY"

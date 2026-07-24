@@ -1,0 +1,54 @@
+<Project>
+
+  <!--
+    Shared NuGet packaging metadata for the Agentics.Extensions.Aspire.* hosting
+    extensions (Terminal, QrCode, Testing.Videos).
+
+    Why the PackageId prefix differs from the assembly namespace: `Aspire.*` is a
+    reserved package-ID prefix owned by Microsoft on nuget.org, so we publish as
+    `Agentics.Extensions.Aspire.*` while keeping the ergonomic `namespace Aspire.Hosting;`
+    in code (the same split CommunityToolkit.Aspire uses). Each project sets its own
+    <PackageId> and <Description>.
+
+    Version: driven by version.txt for local builds (release-please bumps it on this
+    repo). CI overrides with -p:PackageVersion=<semver>, which always wins over
+    <Version> in NuGet pack.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <Authors>Poul Kjeldager Sørensen</Authors>
+    <Company>Agentics</Company>
+    <Product>Agentics Aspire Extensions</Product>
+    <Copyright>Copyright © Agentics</Copyright>
+    <PackageProjectUrl>https://github.com/pksorensen/Agentics.Extensions.Aspire</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/pksorensen/Agentics.Extensions.Aspire.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>aspire;aspire-hosting;dotnet-aspire;extension;agentics</PackageTags>
+
+    <!-- Source-linked, deterministic, symbol-published packages. SourceLink is
+         integrated into the .NET 8+ SDK, so no extra PackageReference is needed. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Don't fail packing on undocumented public members. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <_AspireVersionRaw>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)version.txt'))</_AspireVersionRaw>
+    <Version Condition="'$(PackageVersion)' == ''">$(_AspireVersionRaw.Trim())</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
