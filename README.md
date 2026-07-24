@@ -12,9 +12,9 @@ used across the Agentics platform, published to NuGet so any AppHost can consume
 
 | Package | What it adds |
 | --- | --- |
-| [`Agentics.Extensions.Aspire.Terminal`](Aspire.Hosting.Terminal/) | A terminal application served **in the browser** via `ttyd` + xterm.js, managed as an Aspire resource. Builds from local Go source, reuses an existing binary, or downloads a prebuilt CLI from the agentics.dk install store. |
-| [`Agentics.Extensions.Aspire.QrCode`](Aspire.Hosting.QrCode/) | `WithUrlQRCode` / `WithEndpointQRCode` — a localhost page rendering a QR code for a resource URL (lazy-resolved), handy for opening a tunnelled endpoint on a phone. |
-| [`Agentics.Extensions.Aspire.Testing.Videos`](Aspire.Hosting.Testing.Videos/) | Cinematic video-recording helpers for `Aspire.Hosting.Testing`: a Playwright walkthrough with TTS voiceover, burned-in subtitles, and ffmpeg muxing. |
+| [`Agentics.Extensions.Aspire.Terminal`](src/Aspire.Hosting.Terminal/) | A terminal application served **in the browser** via `ttyd` + xterm.js, managed as an Aspire resource. Builds from local Go source, reuses an existing binary, or downloads a prebuilt CLI from the agentics.dk install store. |
+| [`Agentics.Extensions.Aspire.QrCode`](src/Aspire.Hosting.QrCode/) | `WithUrlQRCode` / `WithEndpointQRCode` — a localhost page rendering a QR code for a resource URL (lazy-resolved), handy for opening a tunnelled endpoint on a phone. |
+| [`Agentics.Extensions.Aspire.Testing.Videos`](src/Aspire.Hosting.Testing.Videos/) | Cinematic video-recording helpers for `Aspire.Hosting.Testing`: a Playwright walkthrough with TTS voiceover, burned-in subtitles, and ffmpeg muxing. |
 
 Each package has its own README with usage.
 

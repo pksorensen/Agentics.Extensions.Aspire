@@ -63,7 +63,7 @@ jobs:
         run: |
           V="${{ github.event.inputs.version }}"
           if [ -z "$V" ]; then V="${{ needs.release-please.outputs.version }}"; fi
-          if [ -z "$V" ]; then V="$(tr -d '[:space:]' < version.txt)"; fi
+          if [ -z "$V" ]; then V="$(tr -d '[:space:]' < src/version.txt)"; fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Publishing version: $V"
 
@@ -72,9 +72,9 @@ jobs:
           set -euo pipefail
           mkdir -p packages
           for proj in \
-            Aspire.Hosting.Terminal/Aspire.Hosting.Terminal.csproj \
-            Aspire.Hosting.QrCode/Aspire.Hosting.QrCode.csproj \
-            Aspire.Hosting.Testing.Videos/Aspire.Hosting.Testing.Videos.csproj; do
+            src/Aspire.Hosting.Terminal/Aspire.Hosting.Terminal.csproj \
+            src/Aspire.Hosting.QrCode/Aspire.Hosting.QrCode.csproj \
+            src/Aspire.Hosting.Testing.Videos/Aspire.Hosting.Testing.Videos.csproj; do
             dotnet pack "$proj" \
               --configuration Release \
               --output ./packages \
