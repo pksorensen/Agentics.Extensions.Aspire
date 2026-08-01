@@ -24,6 +24,15 @@ public static class AgenticsTestkitExtensions
             .WithHttpEndpoint(targetPort: 3000, name: AgenticsTestkitResource.ApiEndpointName)
             .WithHttpEndpoint(targetPort: 8180, name: AgenticsTestkitResource.KeycloakEndpointName)
             .WithHttpEndpoint(targetPort: 8080, name: AgenticsTestkitResource.GitEndpointName)
+            .WithUrlForEndpoint(
+                AgenticsTestkitResource.ApiEndpointName,
+                url => url.DisplayText = "Agentics API")
+            .WithUrlForEndpoint(
+                AgenticsTestkitResource.KeycloakEndpointName,
+                url => url.DisplayText = "Keycloak")
+            .WithUrlForEndpoint(
+                AgenticsTestkitResource.GitEndpointName,
+                url => url.DisplayText = "Hosted Git")
             .WithEnvironment("AGENTICS_TESTKIT_OWNER", options.Owner)
             .WithEnvironment("AGENTICS_TESTKIT_APP_ID", options.AppId)
             .WithEnvironment("AGENTICS_TESTKIT_APP_NAME", options.AppName)

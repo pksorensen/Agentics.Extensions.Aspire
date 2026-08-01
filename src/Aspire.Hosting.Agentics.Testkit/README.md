@@ -21,6 +21,9 @@ builder.AddNpmApp("arvo", "../portal")
 `AGENTICS_GIT_URL`, `AGENTICS_CLIENT_ID`, `AGENTICS_CLIENT_SECRET`, and
 `AGENTICS_SPONSOR_OWNER`, and waits for the testkit health check.
 
+The Aspire dashboard shows the three testkit endpoints as **Agentics API**,
+**Keycloak**, and **Hosted Git**.
+
 The fixture is ephemeral by default. Set `options.PersistData = true` for a named Docker
 volume. Credentials are deterministic and test-only: never expose the resource publicly
 or use it for production data.
