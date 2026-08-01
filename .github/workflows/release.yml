@@ -1,11 +1,11 @@
 name: Release
 
 # release-please watches main; Conventional Commits drive the version bump. When its
-# release PR merges, the three Agentics.Extensions.Aspire.* packages are packed and pushed
+# release PR merges, all Agentics.Extensions.Aspire.* packages are packed and pushed
 # to nuget.org via NuGet.org Trusted Publishing (OIDC) — no long-lived NUGET_API_KEY.
 #
 # One-time setup on nuget.org (Account → Trusted Publishing), for EACH package ID
-# (Agentics.Extensions.Aspire.Terminal / .QrCode / .Testing.Videos):
+# (Agentics.Extensions.Aspire.Terminal / .QrCode / .Testing.Videos / .Testkit):
 #   Publisher:        GitHub Actions
 #   Repository Owner: pksorensen
 #   Repository:       Agentics.Extensions.Aspire
@@ -77,7 +77,8 @@ jobs:
           for proj in \
             src/Aspire.Hosting.Terminal/Aspire.Hosting.Terminal.csproj \
             src/Aspire.Hosting.QrCode/Aspire.Hosting.QrCode.csproj \
-            src/Aspire.Hosting.Testing.Videos/Aspire.Hosting.Testing.Videos.csproj; do
+            src/Aspire.Hosting.Testing.Videos/Aspire.Hosting.Testing.Videos.csproj \
+            src/Aspire.Hosting.Agentics.Testkit/Aspire.Hosting.Agentics.Testkit.csproj; do
             dotnet pack "$proj" \
               --configuration Release \
               --output ./packages \
@@ -110,5 +111,5 @@ jobs:
             echo "### Agentics.Extensions.Aspire publish"
             echo ""
             echo "- **Version:** ${{ steps.ver.outputs.version }}"
-            echo "- **Packages:** Terminal, QrCode, Testing.Videos"
+            echo "- **Packages:** Terminal, QrCode, Testing.Videos, Testkit"
           } >> "$GITHUB_STEP_SUMMARY"

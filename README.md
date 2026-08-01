@@ -15,6 +15,7 @@ used across the Agentics platform, published to NuGet so any AppHost can consume
 | [`Agentics.Extensions.Aspire.Terminal`](src/Aspire.Hosting.Terminal/) | A terminal application served **in the browser** via `ttyd` + xterm.js, managed as an Aspire resource. Builds from local Go source, reuses an existing binary, or downloads a prebuilt CLI from the agentics.dk install store. |
 | [`Agentics.Extensions.Aspire.QrCode`](src/Aspire.Hosting.QrCode/) | `WithUrlQRCode` / `WithEndpointQRCode` — a localhost page rendering a QR code for a resource URL (lazy-resolved), handy for opening a tunnelled endpoint on a phone. |
 | [`Agentics.Extensions.Aspire.Testing.Videos`](src/Aspire.Hosting.Testing.Videos/) | Cinematic video-recording helpers for `Aspire.Hosting.Testing`: a Playwright walkthrough with TTS voiceover, burned-in subtitles, and ffmpeg muxing. |
+| [`Agentics.Extensions.Aspire.Testkit`](src/Aspire.Hosting.Agentics.Testkit/) | One-container Agentics API, Keycloak, and hosted-Git fixture for integrator E2E tests. |
 
 Each package has its own README with usage.
 
@@ -24,13 +25,14 @@ Each package has its own README with usage.
 dotnet add package Agentics.Extensions.Aspire.Terminal
 dotnet add package Agentics.Extensions.Aspire.QrCode
 dotnet add package Agentics.Extensions.Aspire.Testing.Videos
+dotnet add package Agentics.Extensions.Aspire.Testkit
 ```
 
 ## Versioning & release
 
-All three packages share one version (`version.txt`), bumped by
+All packages share one version (`version.txt`), bumped by
 [release-please](https://github.com/googleapis/release-please) from Conventional Commits.
-On release, `.github/workflows/release.yml` packs and pushes all three to nuget.org via
+On release, `.github/workflows/release.yml` packs and pushes all packages to nuget.org via
 **NuGet.org Trusted Publishing (OIDC)** — no stored `NUGET_API_KEY`.
 
 ## License
