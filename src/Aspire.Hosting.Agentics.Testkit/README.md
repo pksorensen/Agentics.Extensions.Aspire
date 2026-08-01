@@ -3,6 +3,9 @@
 Runs the public Agentics integration testkit as one Aspire container and injects its API,
 OAuth, and hosted-Git settings into an integrator application.
 
+The default image is `registry.agentics.dk/agentics/agentics-testkit:latest`. Log in to
+`registry.agentics.dk` with a pull-only, image-scoped credential before starting Aspire.
+
 ```csharp
 var agentics = builder.AddAgenticsTestkit("agentics", options =>
 {

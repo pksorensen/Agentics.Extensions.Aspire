@@ -3,7 +3,7 @@ namespace Aspire.Hosting.Agentics.Testkit;
 /// <summary>Configuration for the local-only Agentics integration testkit.</summary>
 public sealed class AgenticsTestkitOptions
 {
-    public string Image { get; set; } = "ghcr.io/pksorensen/agentics-testkit";
+    public string Image { get; set; } = "registry.agentics.dk/agentics/agentics-testkit";
     public string Tag { get; set; } = "latest";
     public string Owner { get; set; } = "integrator";
     public string AppId { get; set; } = "testkit-app";
