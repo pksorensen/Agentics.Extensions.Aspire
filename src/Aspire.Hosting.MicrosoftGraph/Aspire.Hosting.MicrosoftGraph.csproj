@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.MicrosoftGraph</PackageId>
+    <Description>A versioned Microsoft Graph emulator extension for local Aspire Microsoft tenants.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+    <ProjectReference Include="../Aspire.Hosting.MicrosoftTenant/Aspire.Hosting.MicrosoftTenant.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>
