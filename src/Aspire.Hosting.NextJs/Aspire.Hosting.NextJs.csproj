@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.NextJs</PackageId>
+    <Description>Aspire dashboard commands and diagnostics for Next.js development servers and Turbopack caches.</Description>
+    <!-- Aspire 13.4 marks dashboard interaction notifications experimental.
+         This package intentionally wraps that API behind WithSlowStartDetector. -->
+    <NoWarn>$(NoWarn);ASPIREINTERACTION001</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.JavaScript" Version="13.4.6" />
+  </ItemGroup>
+</Project>

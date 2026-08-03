@@ -5,19 +5,29 @@ namespace Aspire.Hosting.Agentics.Testkit;
 /// <summary>A disposable Agentics integration environment hosted in one container.</summary>
 public sealed class AgenticsTestkitResource : ContainerResource
 {
-    internal AgenticsTestkitResource(string name, string owner, string clientId, string clientSecret)
+    internal AgenticsTestkitResource(string name, AgenticsTestkitOptions options)
         : base(name)
     {
-        Owner = owner;
-        ClientId = clientId;
-        ClientSecret = clientSecret;
+        Options = options;
     }
 
     public const string ApiEndpointName = "http";
     public const string KeycloakEndpointName = "keycloak";
     public const string GitEndpointName = "git";
+    public const string GitSshEndpointName = "git-ssh";
 
-    public string Owner { get; }
-    public string ClientId { get; }
-    public string ClientSecret { get; }
+    public AgenticsTestkitOptions Options { get; }
+
+    public string Owner => Options.Owner;
+    public string ClientId => Options.ClientId;
+    public string ClientSecret => Options.ClientSecret;
+
+    internal List<AgenticsTestkitUser> Users { get; } = [];
 }
+
+internal sealed record AgenticsTestkitUser(
+    string Email,
+    string Name,
+    string Handle,
+    string Password,
+    bool IsAdmin);
