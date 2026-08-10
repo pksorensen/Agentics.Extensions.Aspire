@@ -41,10 +41,25 @@ public static class MicrosoftTenantHostingExtensions
         var options = new MicrosoftTenantOptions();
         configure?.Invoke(options);
 
-        var resource = new MicrosoftTenantResource(name, primaryDomain, tenantId);
+        var resource = new MicrosoftTenantResource(name, primaryDomain, tenantId)
+        {
+            // The address clients will use. Explicit wins; otherwise a fixed host
+            // port implies it. Neither set means no sign-in flow — see the note
+            // on MicrosoftTenantOptions.HostPort for why the issuer cannot be
+            // discovered from the request when a proxy sits in front.
+            PublicUrl = options.PublicUrl?.TrimEnd('/')
+                ?? (options.HostPort is { } port ? $"http://localhost:{port}" : null),
+        };
+
         var tenant = builder.AddResource(resource)
             .WithImage(options.Image, options.Tag)
-            .WithHttpEndpoint(targetPort: 8080, name: MicrosoftTenantResource.HttpEndpointName)
+            .WithHttpEndpoint(
+                port: options.HostPort,
+                targetPort: 8080,
+                name: MicrosoftTenantResource.HttpEndpointName,
+                // Unproxied when the port is pinned: the proxy is what would make
+                // the container see a different host than the client used.
+                isProxied: options.HostPort is null)
             .WithHttpHealthCheck("/healthz", endpointName: MicrosoftTenantResource.HttpEndpointName)
             .WithUrlForEndpoint(
                 MicrosoftTenantResource.HttpEndpointName,
@@ -57,7 +72,11 @@ public static class MicrosoftTenantHostingExtensions
                     JsonSerializer.Serialize(new MicrosoftTenantSeed(
                         resource.PrimaryDomain,
                         resource.TenantId,
-                        resource.Applications.ToList()));
+                        resource.Applications.ToList(),
+                        resource.Users.ToList()));
+
+                if (resource.PublicUrl is { } publicUrl)
+                    context.EnvironmentVariables["MICROSOFT_TENANT_PUBLIC_URL"] = publicUrl;
 
                 foreach (var feature in resource.Features)
                 {
@@ -94,6 +113,58 @@ public static class MicrosoftTenantHostingExtensions
 
         tenant.Resource.Applications.Add(new(displayName, clientId, clientSecret));
         return tenant;
+    }
+
+    /// <summary>
+    /// Seeds a person into the emulated directory, with the app roles they hold.
+    ///
+    /// Roles are opaque strings — whatever the application under test expects on
+    /// the <c>roles</c> claim. The emulator never interprets them, so nothing
+    /// about one product's role names has to be known here.
+    ///
+    /// Seeding is not required to sign in: the sign-in page also accepts an
+    /// address it has never seen, which is what makes "invite somebody, then be
+    /// them" a flow a test can walk end to end.
+    /// </summary>
+    public static IResourceBuilder<MicrosoftTenantResource> AddUser(
+        this IResourceBuilder<MicrosoftTenantResource> tenant,
+        string email,
+        string? displayName = null,
+        params string[] roles)
+    {
+        ArgumentNullException.ThrowIfNull(tenant);
+        ArgumentException.ThrowIfNullOrWhiteSpace(email);
+
+        if (!email.Contains('@'))
+            throw new ArgumentException("A user's email address must contain '@'.", nameof(email));
+        if (tenant.Resource.Users.Any(u => string.Equals(u.Email, email, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"User '{email}' is already seeded.", nameof(email));
+
+        tenant.Resource.Users.Add(new MicrosoftTenantUser(
+            MicrosoftTenant.Emulator.MicrosoftTenantState.ObjectIdFor(email),
+            string.IsNullOrWhiteSpace(displayName) ? email.Split('@')[0] : displayName!,
+            email,
+            roles));
+
+        return tenant;
+    }
+
+    /// <summary>
+    /// The OIDC authority this tenant issues tokens under —
+    /// <c>{public url}/{tenant id}/v2.0</c>, the value an application's issuer
+    /// setting has to match byte for byte.
+    /// </summary>
+    public static string GetIssuer(this IResourceBuilder<MicrosoftTenantResource> tenant)
+    {
+        ArgumentNullException.ThrowIfNull(tenant);
+
+        var publicUrl = tenant.Resource.PublicUrl
+            ?? throw new InvalidOperationException(
+                "This tenant has no public address, so no issuer can be stated. Set MicrosoftTenantOptions.HostPort "
+                + "(or PublicUrl) when adding it — an OIDC client compares the issuer byte for byte and will refuse "
+                + "a sign-in when it differs.");
+
+        return $"{publicUrl}/{tenant.Resource.TenantId}/v2.0";
     }
 
     private static void BuildLocalImage(
