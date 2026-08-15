@@ -1,3 +1,4 @@
+using System.Globalization;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.JavaScript;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,6 +13,38 @@ namespace Aspire.Hosting;
 public static class NextJsDevelopmentExtensions
 {
     private const string ClearCommandName = "clear-turbopack-cache";
+
+    /// <summary>
+    /// The default V8 old-space heap limit for Next.js development servers, in MiB.
+    /// </summary>
+    public const int DefaultMaxOldSpaceSizeMegabytes = 16 * 1024;
+
+    /// <summary>
+    /// Applies the shared local-development defaults for a Next.js resource.
+    /// </summary>
+    /// <remarks>
+    /// Next.js 16 otherwise assigns <c>next dev</c> half of <c>os.totalmem()</c>
+    /// when no V8 heap limit is present. That is unsafe on large shared hosts.
+    /// This method also disables Next.js' own memory override as a fallback and
+    /// turns off anonymous telemetry and its detached upload process.
+    /// </remarks>
+    public static IResourceBuilder<TResource> WithNextJsDefaults<TResource>(
+        this IResourceBuilder<TResource> builder,
+        int maxOldSpaceSizeMegabytes = DefaultMaxOldSpaceSizeMegabytes)
+        where TResource : JavaScriptAppResource
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        if (maxOldSpaceSizeMegabytes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxOldSpaceSizeMegabytes));
+
+        var nodeOptions = "--max-old-space-size=" +
+            maxOldSpaceSizeMegabytes.ToString(CultureInfo.InvariantCulture);
+
+        return builder
+            .WithEnvironment("NODE_OPTIONS", nodeOptions)
+            .WithEnvironment("NEXT_DISABLE_MEM_OVERRIDE", "1")
+            .DisableTelemetry();
+    }
 
     /// <summary>
     /// Turns off Next.js' anonymous usage telemetry by setting

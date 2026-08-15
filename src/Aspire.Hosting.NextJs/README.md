@@ -9,9 +9,9 @@ dotnet add package Agentics.Extensions.Aspire.NextJs
 
 ```csharp
 var web = builder.AddNodeApp("web", "../web", "unused")
+    .WithNextJsDefaults()
     .WithNpm(install: true)
     .WithRunScript("dev")
-    .DisableTelemetry()
     .WithTurbopackTracing()
     .ClearTurbopackCache(limit: "1gb")
     .WithSlowStartDetector(options =>
@@ -23,6 +23,10 @@ var web = builder.AddNodeApp("web", "../web", "unused")
 
 ## What the extensions do
 
+- `WithNextJsDefaults()` applies the defaults every Next.js development resource
+  should share: a fixed 16 GiB V8 old-space limit, `NEXT_DISABLE_MEM_OVERRIDE=1`
+  so Next.js never falls back to half of host RAM, and telemetry disabled. Pass
+  `maxOldSpaceSizeMegabytes` to override the heap limit for an exceptional app.
 - `DisableTelemetry()` sets `NEXT_TELEMETRY_DISABLED=1`. Besides opting out of
   anonymous usage reporting, it stops Next.js from spawning `detached-flush.js`
   on exit. That detached child uploads the telemetry batch so the command need
