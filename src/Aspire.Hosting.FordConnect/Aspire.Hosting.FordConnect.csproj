@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.FordConnect</PackageId>
+    <Description>Aspire hosting and emulator for FordConnect 2.0 — the account-link door, the token endpoint and the Query API, with Ford's measured rate limit.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>
