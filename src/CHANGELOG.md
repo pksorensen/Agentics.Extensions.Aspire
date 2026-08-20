@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.4](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.3...v0.2.4) (2026-08-20)
+
+
+### Features
+
+* **fordconnect:** emulate FordConnect 2.0, and replay a recorded car ([dd625eb](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/dd625eb217334b86bc0bd5e428f5f7dec1312c2c))
+* **microsoft-tenant:** interactive sign-in for the emulated tenant ([b6703a6](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/b6703a6bae33ec1b003659d4c690798c619f9913))
+
 ## [0.2.3](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.2...v0.2.3) (2026-08-03)
 
 
