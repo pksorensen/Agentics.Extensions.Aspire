@@ -20,6 +20,7 @@ used across the Agentics platform, published to NuGet so any AppHost can consume
 | [`Agentics.Extensions.Aspire.MicrosoftTenant`](src/Aspire.Hosting.MicrosoftTenant/) | A local Microsoft tenant resource, seeded app registrations, and OAuth client-credentials endpoint. |
 | [`Agentics.Extensions.Aspire.MicrosoftGraph`](src/Aspire.Hosting.MicrosoftGraph/) | Partial, versioned Microsoft Graph emulation for app registrations, service principals, and credentials. |
 | [`Agentics.Extensions.Aspire.AzureResourceManager`](src/Aspire.Hosting.AzureResourceManager/) | Extensible ARM routing with composable, API-version-aware provider emulators. |
+| [`Agentics.Extensions.Aspire.FordConnect`](src/Aspire.Hosting.FordConnect/) | An emulated FordConnect 2.0 — the account-link door, the B2C token endpoint and the Query API — with Ford's measured rate limit, twenty-minute access tokens, and a browser portal for driving the car. |
 
 Each package has its own README with usage.
 
@@ -34,6 +35,7 @@ dotnet add package Agentics.Extensions.Aspire.NextJs
 dotnet add package Agentics.Extensions.Aspire.MicrosoftTenant
 dotnet add package Agentics.Extensions.Aspire.MicrosoftGraph
 dotnet add package Agentics.Extensions.Aspire.AzureResourceManager
+dotnet add package Agentics.Extensions.Aspire.FordConnect
 ```
 
 ## Versioning & release
