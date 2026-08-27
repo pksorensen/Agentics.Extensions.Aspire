@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.MitID</PackageId>
+    <Description>AddMitIdTestUsers — wires an agent-mitid instance into an AppHost so integration tests can approve MitID pre-production logins without a phone. Injects MITID_SERVICE_URL and MITID_MCP_TOKEN into referencing projects.</Description>
+    <PackageTags>$(PackageTags);mitid;testing;e2e</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.5.2" />
+  </ItemGroup>
+</Project>

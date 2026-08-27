@@ -85,7 +85,9 @@ jobs:
             src/Aspire.Hosting.MicrosoftTenant/Aspire.Hosting.MicrosoftTenant.csproj \
             src/Aspire.Hosting.MicrosoftGraph/Aspire.Hosting.MicrosoftGraph.csproj \
             src/Aspire.Hosting.AzureResourceManager/Aspire.Hosting.AzureResourceManager.csproj \
-            src/Aspire.Hosting.FordConnect/Aspire.Hosting.FordConnect.csproj; do
+            src/Aspire.Hosting.FordConnect/Aspire.Hosting.FordConnect.csproj \
+            src/Aspire.Hosting.MitID/Aspire.Hosting.MitID.csproj \
+            src/Agentics.MitID.Testing/Agentics.MitID.Testing.csproj; do
             dotnet pack "$proj" \
               --configuration Release \
               --output ./packages \

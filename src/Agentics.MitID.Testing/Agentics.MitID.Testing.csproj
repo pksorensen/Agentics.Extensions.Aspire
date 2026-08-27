@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Agentics.MitID.Testing</PackageId>
+    <Description>Approve MitID pre-production logins from a test, with no phone and no browser. Plays the MitID code app over REST against pp.mitid.dk, either directly or through an agent-mitid registry. Test environment only — the host is not configurable.</Description>
+    <PackageTags>mitid;testing;e2e;denmark;eid;agentics</PackageTags>
+  </PropertyGroup>
+</Project>

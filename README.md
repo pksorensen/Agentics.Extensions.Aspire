@@ -21,6 +21,8 @@ used across the Agentics platform, published to NuGet so any AppHost can consume
 | [`Agentics.Extensions.Aspire.MicrosoftGraph`](src/Aspire.Hosting.MicrosoftGraph/) | Partial, versioned Microsoft Graph emulation for app registrations, service principals, and credentials. |
 | [`Agentics.Extensions.Aspire.AzureResourceManager`](src/Aspire.Hosting.AzureResourceManager/) | Extensible ARM routing with composable, API-version-aware provider emulators. |
 | [`Agentics.Extensions.Aspire.FordConnect`](src/Aspire.Hosting.FordConnect/) | An emulated FordConnect 2.0 — the account-link door, the B2C token endpoint and the Query API — with Ford's measured rate limit, twenty-minute access tokens, and a browser portal for driving the car. |
+| [`Agentics.Extensions.Aspire.MitID`](src/Aspire.Hosting.MitID/) | `AddMitIdTestUsers` / `WithMitIdTestUsers` — points an AppHost at a running `agent-mitid` registry and injects `MITID_SERVICE_URL` + `MITID_MCP_TOKEN`, so an integration test can approve a MitID **pre-production** login without a phone. Injects nothing when unconfigured, so the suite still runs on a laptop with no token. |
+| [`Agentics.MitID.Testing`](src/Agentics.MitID.Testing/) | The client behind it — plays the MitID code app over REST against `pp.mitid.dk`, either directly or through an `agent-mitid` registry. One call at the moment a login is waiting; no browser, no phone, about a second. Test environment only: the host is a constant, not a setting. |
 
 Each package has its own README with usage.
 
@@ -36,6 +38,8 @@ dotnet add package Agentics.Extensions.Aspire.MicrosoftTenant
 dotnet add package Agentics.Extensions.Aspire.MicrosoftGraph
 dotnet add package Agentics.Extensions.Aspire.AzureResourceManager
 dotnet add package Agentics.Extensions.Aspire.FordConnect
+dotnet add package Agentics.Extensions.Aspire.MitID
+dotnet add package Agentics.MitID.Testing
 ```
 
 ## Versioning & release
