@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.Declare</PackageId>
+    <Description>AddAgenticsDeclare — an AppHost declares which parameters it needs and what kind of credential would satisfy them, so a tool outside can fill them from what the developer is already signed in to. Adds one dependency-free pipeline step that starts nothing; `pks aspire run` reads it and starts the real run with the answers already in the environment, so no key is pasted, prompted for, or written to user secrets.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.5.3" />
+  </ItemGroup>
+</Project>

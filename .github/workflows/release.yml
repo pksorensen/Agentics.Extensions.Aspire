@@ -87,6 +87,7 @@ jobs:
             src/Aspire.Hosting.AzureResourceManager/Aspire.Hosting.AzureResourceManager.csproj \
             src/Aspire.Hosting.FordConnect/Aspire.Hosting.FordConnect.csproj \
             src/Aspire.Hosting.MitID/Aspire.Hosting.MitID.csproj \
+            src/Aspire.Hosting.Agentics.Declare/Aspire.Hosting.Agentics.Declare.csproj \
             src/Agentics.MitID.Testing/Agentics.MitID.Testing.csproj; do
             dotnet pack "$proj" \
               --configuration Release \
