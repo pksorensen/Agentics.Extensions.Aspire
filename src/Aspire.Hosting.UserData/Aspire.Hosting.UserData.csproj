@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared metadata (TFM, versioning, packaging) lives in ../Directory.Build.props. -->
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.UserData</PackageId>
+    <Description>Aspire hosting integration for file-backed apps that keep their state in a USER_DATA_DIR. Points a resource at a local data directory and adds dashboard commands that pull a fresh copy of production down over SSH, redacting the secrets you name on the way in, so debugging against real data does not mean carrying real credentials.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.5.3" />
+  </ItemGroup>
+
+</Project>

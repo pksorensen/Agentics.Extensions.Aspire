@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared metadata (TFM, versioning, packaging) lives in ../Directory.Build.props. -->
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.Registry</PackageId>
+    <Description>Aspire hosting integration that checks, before startup, whether this machine can actually pull the private container images the AppHost uses — and puts the sign-in steps in the dashboard when it cannot.</Description>
+    <!-- Aspire marks dashboard interaction notifications experimental. This
+         package exists to raise one, so the warning is suppressed here rather
+         than in every consuming AppHost. -->
+    <NoWarn>$(NoWarn);ASPIREINTERACTION001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+  </ItemGroup>
+
+</Project>

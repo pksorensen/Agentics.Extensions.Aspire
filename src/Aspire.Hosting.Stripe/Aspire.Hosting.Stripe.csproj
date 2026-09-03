@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared metadata (TFM, versioning, packaging) lives in ../Directory.Build.props. -->
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.Stripe</PackageId>
+    <Description>Aspire hosting integration that runs the Stripe CLI as Aspire-managed webhook listeners — standard and Connect — and installs the CLI itself when it is missing, instead of failing with "executable file not found in $PATH". Captures the webhook signing secret and hands it to your app.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 13.5.2, not the 13.4.6 half of this repo: the consumers of this package are on the
+         13.5.x line, and AddExecutable's environment-callback surface is what we build on. -->
+    <PackageReference Include="Aspire.Hosting" Version="13.5.3" />
+  </ItemGroup>
+
+</Project>

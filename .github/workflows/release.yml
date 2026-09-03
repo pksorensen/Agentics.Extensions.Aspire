@@ -6,7 +6,8 @@ name: Release
 #
 # One-time setup on nuget.org (Account → Trusted Publishing), for EACH package ID
 # (Agentics.Extensions.Aspire.Terminal / .QrCode / .Testing.Videos / .Testkit / .NextJs /
-# .MicrosoftTenant / .MicrosoftGraph / .AzureResourceManager):
+# .MicrosoftTenant / .MicrosoftGraph / .AzureResourceManager / .FordConnect / .MitID /
+# .Declare / .Registry / .Stripe / .UserData):
 #   Publisher:        GitHub Actions
 #   Repository Owner: pksorensen
 #   Repository:       Agentics.Extensions.Aspire
@@ -86,6 +87,9 @@ jobs:
             src/Aspire.Hosting.MicrosoftGraph/Aspire.Hosting.MicrosoftGraph.csproj \
             src/Aspire.Hosting.AzureResourceManager/Aspire.Hosting.AzureResourceManager.csproj \
             src/Aspire.Hosting.FordConnect/Aspire.Hosting.FordConnect.csproj \
+            src/Aspire.Hosting.Registry/Aspire.Hosting.Registry.csproj \
+            src/Aspire.Hosting.Stripe/Aspire.Hosting.Stripe.csproj \
+            src/Aspire.Hosting.UserData/Aspire.Hosting.UserData.csproj \
             src/Aspire.Hosting.MitID/Aspire.Hosting.MitID.csproj \
             src/Aspire.Hosting.Agentics.Declare/Aspire.Hosting.Agentics.Declare.csproj \
             src/Agentics.MitID.Testing/Agentics.MitID.Testing.csproj; do
