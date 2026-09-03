@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.5...v0.2.6) (2026-09-03)
+
+
+### Features
+
+* **stripe,userdata,registry:** udgiv de tre sidste udvidelser som pakker ([432510f](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/432510fe92533429b66dad017c428225f03511fe))
+
 ## [0.2.5](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.4...v0.2.5) (2026-08-29)
 
 
