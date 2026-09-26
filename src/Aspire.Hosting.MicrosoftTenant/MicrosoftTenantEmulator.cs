@@ -40,6 +40,8 @@ public sealed class MicrosoftTenantState
 
     internal TenantSigningKey SigningKey { get; } = new();
     internal AuthorizationCodeStore Codes { get; } = new();
+    internal RefreshTokenStore RefreshTokens { get; } = new();
+    internal ConcurrentDictionary<string, string> ApplicationSessions { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Access token → object id, so the userinfo endpoint can answer.
     /// Bounded only by process lifetime, which is fine for a local emulator and
@@ -156,6 +158,7 @@ public static class MicrosoftTenantEmulatorExtensions
 
         endpoints.MapPost("/login/{tenantId}/oauth2/v2.0/token", IssueToken);
         endpoints.MapPost("/{tenantId}/oauth2/v2.0/token", IssueToken);
+        endpoints.MapGet("/{tenantId}/oauth2/v2.0/tokeninfo", TokenInfo);
         endpoints.MapOidc();
         return endpoints;
     }
@@ -176,15 +179,43 @@ public static class MicrosoftTenantEmulatorExtensions
 
         return form["grant_type"].ToString() switch
         {
-            "client_credentials" => Results.Ok(new
-            {
-                token_type = "Bearer",
-                expires_in = 3600,
-                access_token = $"tenant:{tenant.TenantId}:app:{clientId}:scope:{form["scope"]}",
-            }),
+            "client_credentials" => IssueApplicationToken(tenant, clientId),
             "authorization_code" => MicrosoftTenantOidc.ExchangeCode(request, form, tenant, clientId),
+            "refresh_token" => MicrosoftTenantOidc.ExchangeRefreshToken(request, form, tenant, clientId),
             var other => OAuthError("unsupported_grant_type", $"AADSTS70000: grant type '{other}' is not emulated"),
         };
+    }
+
+    private static IResult IssueApplicationToken(MicrosoftTenantState tenant, string clientId)
+    {
+        var accessToken = MicrosoftTenantOidc.Base64Url(RandomNumberGenerator.GetBytes(48));
+        tenant.ApplicationSessions[accessToken] = clientId;
+        return Results.Ok(new
+        {
+            token_type = "Bearer",
+            expires_in = 3600,
+            access_token = accessToken,
+        });
+    }
+
+    private static IResult TokenInfo(string tenantId, HttpRequest request, MicrosoftTenantState tenant)
+    {
+        if (!tenant.IsThisTenant(tenantId))
+            return OAuthError("invalid_request", $"AADSTS90002: tenant '{tenantId}' not found");
+
+        var header = request.Headers.Authorization.ToString();
+        var token = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? header[7..].Trim()
+            : string.Empty;
+        if (token.Length == 0)
+            return Results.Json(new { active = false }, statusCode: 401);
+
+        if (tenant.Sessions.TryGetValue(token, out var subject))
+            return Results.Json(new { active = true, principal_type = "user", sub = subject });
+        if (tenant.ApplicationSessions.TryGetValue(token, out var clientId))
+            return Results.Json(new { active = true, principal_type = "application", appid = clientId });
+
+        return Results.Json(new { active = false }, statusCode: 401);
     }
 
     /// <summary>

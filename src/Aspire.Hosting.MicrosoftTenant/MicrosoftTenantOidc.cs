@@ -247,15 +247,73 @@ public static class MicrosoftTenantOidc
 
         tenant.Sessions[accessToken] = user.ObjectId;
 
-        return Results.Ok(new
+        var response = new Dictionary<string, object?>
         {
-            token_type = "Bearer",
-            expires_in = (int)TokenLifetime.TotalSeconds,
-            scope = string.IsNullOrEmpty(grant.Scope) ? "openid profile email" : grant.Scope,
-            access_token = accessToken,
-            id_token = tenant.SigningKey.Sign(idClaims),
+            ["token_type"] = "Bearer",
+            ["expires_in"] = (int)TokenLifetime.TotalSeconds,
+            ["scope"] = string.IsNullOrEmpty(grant.Scope) ? "openid profile email" : grant.Scope,
+            ["access_token"] = accessToken,
+            ["id_token"] = tenant.SigningKey.Sign(idClaims),
+        };
+        if (Scopes(grant.Scope).Contains("offline_access"))
+        {
+            response["refresh_token"] = tenant.RefreshTokens.Issue(new RefreshGrant(
+                clientId,
+                user.ObjectId,
+                grant.Scope,
+                DateTimeOffset.UtcNow.AddDays(30)));
+        }
+
+        return Results.Json(response);
+    }
+
+    internal static IResult ExchangeRefreshToken(
+        HttpRequest request,
+        IFormCollection form,
+        MicrosoftTenantState tenant,
+        string clientId)
+    {
+        if (!tenant.RefreshTokens.TryUse(form["refresh_token"].ToString(), out var grant))
+            return OAuthError("invalid_grant", "AADSTS700082: the refresh token is expired or invalid");
+        if (!string.Equals(grant.ClientId, clientId, StringComparison.OrdinalIgnoreCase))
+            return OAuthError("invalid_grant", "AADSTS50148: the refresh token was issued to a different client");
+
+        var user = tenant.FindUser(grant.Subject);
+        if (user is null)
+            return OAuthError("invalid_grant", "AADSTS50034: the account no longer exists in this tenant");
+
+        var now = DateTimeOffset.UtcNow;
+        var issuer = tenant.Issuer(request);
+        var accessClaims = new Dictionary<string, object?>
+        {
+            ["iss"] = issuer,
+            ["aud"] = "00000003-0000-0000-c000-000000000000",
+            ["sub"] = user.ObjectId,
+            ["oid"] = user.ObjectId,
+            ["appid"] = clientId,
+            ["scp"] = string.IsNullOrEmpty(grant.Scope) ? "openid profile email" : grant.Scope,
+            ["preferred_username"] = user.Email,
+            ["iat"] = now.ToUnixTimeSeconds(),
+            ["nbf"] = now.ToUnixTimeSeconds(),
+            ["exp"] = (now + TokenLifetime).ToUnixTimeSeconds(),
+        };
+        if (issuer.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            accessClaims["tid"] = tenant.TenantId;
+
+        var accessToken = tenant.SigningKey.Sign(accessClaims);
+        tenant.Sessions[accessToken] = user.ObjectId;
+        return Results.Json(new Dictionary<string, object?>
+        {
+            ["token_type"] = "Bearer",
+            ["expires_in"] = (int)TokenLifetime.TotalSeconds,
+            ["scope"] = grant.Scope,
+            ["access_token"] = accessToken,
         });
     }
+
+    private static HashSet<string> Scopes(string value) =>
+        value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static bool PkceHolds(AuthorizationCode grant, string verifier)
     {
@@ -461,6 +519,45 @@ internal sealed class AuthorizationCodeStore
         var now = DateTimeOffset.UtcNow;
         foreach (var (key, value) in _codes)
             if (value.ExpiresAt <= now) _codes.TryRemove(key, out _);
+    }
+}
+
+internal sealed record RefreshGrant(
+    string ClientId,
+    string Subject,
+    string Scope,
+    DateTimeOffset ExpiresAt);
+
+internal sealed class RefreshTokenStore
+{
+    private readonly ConcurrentDictionary<string, RefreshGrant> _tokens = new(StringComparer.Ordinal);
+
+    public string Issue(RefreshGrant grant)
+    {
+        var value = MicrosoftTenantOidc.Base64Url(RandomNumberGenerator.GetBytes(48));
+        _tokens[value] = grant;
+        Sweep();
+        return value;
+    }
+
+    public bool TryUse(string value, out RefreshGrant grant)
+    {
+        grant = default!;
+        if (string.IsNullOrEmpty(value) || !_tokens.TryGetValue(value, out var found)) return false;
+        if (found.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            _tokens.TryRemove(value, out _);
+            return false;
+        }
+        grant = found;
+        return true;
+    }
+
+    private void Sweep()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var (key, value) in _tokens)
+            if (value.ExpiresAt <= now) _tokens.TryRemove(key, out _);
     }
 }
 

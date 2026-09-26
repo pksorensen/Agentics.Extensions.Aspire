@@ -4,7 +4,7 @@
     <Description>Aspire hosting and emulator primitives for a local Microsoft Entra tenant.</Description>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting" Version="13.5.3" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 </Project>

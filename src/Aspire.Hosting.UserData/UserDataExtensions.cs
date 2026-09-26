@@ -1,8 +1,8 @@
 using Aspire.Hosting.ApplicationModel;
-using Aspire.Hosting.Eventing;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Aspire.Hosting.UserData;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Aspire.Hosting;
 
@@ -35,7 +35,7 @@ public static class UserDataExtensions
         this IResourceBuilder<T> resource,
         string localPath,
         Action<UserDataSyncOptions> configure)
-        where T : class, IResource, IResourceWithEnvironment
+        where T : class, IResource, IResourceWithEnvironment, IResourceWithWaitSupport
     {
         ArgumentNullException.ThrowIfNull(resource);
         ArgumentNullException.ThrowIfNull(configure);
@@ -68,7 +68,12 @@ public static class UserDataExtensions
             {
                 try
                 {
-                    await RemoteUserData.FetchAsync(options, path, context.Logger, context.CancellationToken)
+                    await RemoteUserData.FetchAsync(
+                            options,
+                            path,
+                            context.Logger,
+                            context.Services.GetRequiredService<IInteractionService>(),
+                            context.CancellationToken)
                         .ConfigureAwait(false);
 
                     return new ExecuteCommandResult
@@ -92,10 +97,10 @@ public static class UserDataExtensions
             },
             new CommandOptions
             {
-                Description = "Copy the live production data directory down over SSH, redacted.",
+                Description = "Copy the live production data directory to this machine, redacted.",
                 IconName = "CloudArrowDown",
                 ConfirmationMessage =
-                    $"This copies real customer data from {options.Host} onto this machine. " +
+                    $"This copies real customer data from {options.SourceDisplayName} onto this machine. " +
                     "It is redacted on the way in and deleted again after " +
                     $"{options.RetainDays} days. Continue?",
             });
@@ -156,7 +161,8 @@ public static class UserDataExtensions
                 ConfirmationMessage = "Restore the most recent backup? The current data directory is deleted.",
             });
 
-        if (WantsSyncOnStart(options.SyncOnStartSwitch))
+        var syncOnStart = ReadSyncOnStart(options.SyncOnStartSwitch);
+        if (syncOnStart.Enabled)
         {
             if (!string.IsNullOrWhiteSpace(configured))
             {
@@ -169,7 +175,8 @@ public static class UserDataExtensions
                     "into a test directory: run without the isolation override, or without the switch.");
             }
 
-            SyncBeforeStart(resource, options, path);
+            options.AzureUsername = syncOnStart.Username;
+            AddSyncResource(resource, options, path);
         }
 
         return resource;
@@ -189,43 +196,128 @@ public static class UserDataExtensions
     /// change here: the original <c>--sync-prod</c> is still on the command line.
     /// </para>
     /// </summary>
-    private static bool WantsSyncOnStart(string @switch)
+    private static (bool Enabled, string? Username) ReadSyncOnStart(string @switch)
     {
-        if (string.IsNullOrWhiteSpace(@switch)) return false;
+        if (string.IsNullOrWhiteSpace(@switch)) return (false, null);
 
-        return Environment.GetCommandLineArgs().Any(arg =>
-            arg.Equals(@switch, StringComparison.OrdinalIgnoreCase) ||
-            arg.Equals($"{@switch}=true", StringComparison.OrdinalIgnoreCase));
+        var args = Environment.GetCommandLineArgs();
+        for (var index = 0; index < args.Length; index++)
+        {
+            var arg = args[index];
+            if (arg.Equals($"{@switch}=true", StringComparison.OrdinalIgnoreCase))
+                return (true, null);
+
+            var prefix = @switch + "=";
+            if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var value = arg[prefix.Length..].Trim();
+                if (value.Equals("false", StringComparison.OrdinalIgnoreCase)) return (false, null);
+                return (true, value.Equals("true", StringComparison.OrdinalIgnoreCase) ? null : value);
+            }
+
+            if (!arg.Equals(@switch, StringComparison.OrdinalIgnoreCase)) continue;
+
+            var username = index + 1 < args.Length && !args[index + 1].StartsWith('-')
+                ? args[index + 1].Trim()
+                : null;
+            return (true, string.IsNullOrWhiteSpace(username) ? null : username);
+        }
+
+        return (false, null);
     }
 
     /// <summary>
-    /// Fetches before the application model starts, so every resource comes up against the copy.
-    /// <para>
-    /// A failure here stops start-up. Someone who asked for production's state and silently got
-    /// yesterday's — or the empty directory a first run leaves behind — would be testing the one
-    /// thing they did not ask to test, and would have no way of telling.
-    /// </para>
+    /// Models the fetch as a one-shot resource instead of blocking <c>BeforeStartEvent</c>. This
+    /// lets the dashboard connect immediately and show progress while the application resource
+    /// waits for a successful, atomic snapshot install.
     /// </summary>
-    private static void SyncBeforeStart<T>(
+    private static void AddSyncResource<T>(
         IResourceBuilder<T> resource, UserDataSyncOptions options, string path)
-        where T : class, IResource, IResourceWithEnvironment
+        where T : class, IResource, IResourceWithEnvironment, IResourceWithWaitSupport
     {
-        resource.ApplicationBuilder.Eventing.Subscribe<BeforeStartEvent>(async (@event, ct) =>
+        var sync = resource.ApplicationBuilder
+            .AddResource(new UserDataSyncResource($"{resource.Resource.Name}-sync-prod"))
+            .WithInitialState(new CustomResourceSnapshot
+            {
+                ResourceType = "Production data sync",
+                State = new ResourceStateSnapshot(KnownResourceStates.Starting, KnownResourceStateStyles.Info),
+                Properties = [
+                    new("source", options.SourceDisplayName),
+                    new("destination", path),
+                ],
+                IconName = "CloudArrowDown",
+            });
+
+        sync.OnInitializeResource((syncResource, @event, ct) =>
         {
-            var logger = @event.Services
-                .GetRequiredService<ResourceLoggerService>()
-                .GetLogger(resource.Resource);
-
-            // The dashboard is not up yet, so the resource log alone would be invisible for the
-            // minute or two this takes. Say it on the console too.
-            Console.WriteLine(
-                $"[UserData] {options.SyncOnStartSwitch}: fetching production data from {options.Host} " +
-                $"into {path} before anything starts. This is real customer data, redacted on the way in.");
-
-            await RemoteUserData.FetchAsync(options, path, logger, ct).ConfigureAwait(false);
-
-            Console.WriteLine("[UserData] production data in place; starting resources against it.");
+            // The initialize-event token belongs to this callback and is cancelled when the
+            // callback returns. The sync is a background resource, so its lifetime follows the
+            // AppHost instead.
+            var stopping = @event.Services
+                .GetRequiredService<IHostApplicationLifetime>()
+                .ApplicationStopping;
+            _ = RunSyncResourceAsync(syncResource, @event, options, path, stopping);
+            return Task.CompletedTask;
         });
+
+        resource.WaitForCompletion(sync);
+    }
+
+    private static async Task RunSyncResourceAsync(
+        UserDataSyncResource resource,
+        InitializeResourceEvent @event,
+        UserDataSyncOptions options,
+        string path,
+        CancellationToken ct)
+    {
+        await @event.Notifications.PublishUpdateAsync(resource, snapshot => snapshot with
+        {
+            State = new ResourceStateSnapshot("Downloading", KnownResourceStateStyles.Info),
+            StartTimeStamp = DateTime.UtcNow,
+            Properties = [
+                new("source", options.SourceDisplayName),
+                new("destination", path),
+            ],
+        }).ConfigureAwait(false);
+
+        try
+        {
+            await RemoteUserData.FetchAsync(
+                    options,
+                    path,
+                    @event.Logger,
+                    @event.Services.GetRequiredService<IInteractionService>(),
+                    ct)
+                .ConfigureAwait(false);
+
+            await @event.Notifications.PublishUpdateAsync(resource, snapshot => snapshot with
+            {
+                State = new ResourceStateSnapshot(KnownResourceStates.Finished, KnownResourceStateStyles.Success),
+                ExitCode = 0,
+                StopTimeStamp = DateTime.UtcNow,
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await @event.Notifications.PublishUpdateAsync(resource, snapshot => snapshot with
+            {
+                State = new ResourceStateSnapshot(KnownResourceStates.Exited, KnownResourceStateStyles.Warn),
+                ExitCode = 130,
+                StopTimeStamp = DateTime.UtcNow,
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            @event.Logger.LogError(ex, "Production data sync failed");
+            Console.Error.WriteLine($"Production data sync failed: {ex}");
+            await @event.Notifications.PublishUpdateAsync(resource, snapshot => snapshot with
+            {
+                State = new ResourceStateSnapshot(KnownResourceStates.Exited, KnownResourceStateStyles.Error),
+                ExitCode = 1,
+                StopTimeStamp = DateTime.UtcNow,
+                Properties = [.. snapshot.Properties, new("error", ex.Message)],
+            }).ConfigureAwait(false);
+        }
     }
 
     private static string? LatestBackup(string path)
