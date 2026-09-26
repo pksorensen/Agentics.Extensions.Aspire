@@ -11,14 +11,17 @@ public sealed class TurbopackSlowStartDetectorOptions
     public TimeSpan SlowCompilationThreshold { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// How often the detector checks for new Next.js trace events.
+    /// How often the detector checks for new Next.js trace events. Each poll
+    /// reads only the bytes appended since the previous one.
     /// </summary>
-    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(2);
+    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// How often the detector measures the on-disk Turbopack cache.
+    /// How often the detector measures the on-disk Turbopack cache. This walks
+    /// the generated cache tree, so it is deliberately far coarser than
+    /// <see cref="PollInterval"/>.
     /// </summary>
-    public TimeSpan CacheSizePollInterval { get; set; } = TimeSpan.FromSeconds(30);
+    public TimeSpan CacheSizePollInterval { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Cache size at which the detector recommends clearing the cache.

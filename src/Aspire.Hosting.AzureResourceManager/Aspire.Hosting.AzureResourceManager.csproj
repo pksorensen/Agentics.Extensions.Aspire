@@ -4,7 +4,7 @@
     <Description>Extensible, API-version-aware Azure Resource Manager provider emulator for Aspire.</Description>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting" Version="13.5.3" />
     <ProjectReference Include="../Aspire.Hosting.MicrosoftTenant/Aspire.Hosting.MicrosoftTenant.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

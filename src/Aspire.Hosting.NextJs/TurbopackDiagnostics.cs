@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO.Enumeration;
 using System.Text.Json;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Logging;
@@ -8,22 +9,42 @@ namespace Aspire.Hosting;
 internal sealed class TurbopackDiagnosticsAnnotation(
     JavaScript.JavaScriptAppResource resource) : IResourceAnnotation
 {
+    // The scan window is allocated once and reused for the life of the process,
+    // and its initial size is deliberately below the 85,000-byte large-object
+    // heap threshold.
+    //
+    // The previous implementation read the whole trace into a fresh array every
+    // time the file changed. Next never truncates .next/dev/trace — it appends
+    // across `next dev` restarts and keeps weeks of history — so that array grew
+    // without bound, every instance landed on the LOH, and the LOH is swept but
+    // not compacted. A long-lived AppHost paid for the entire file repeatedly to
+    // learn about a few kilobytes of new spans.
+    private const int InitialScanWindowBytes = 64 * 1024;
+
+    // A single trace batch larger than this is skipped rather than buffered.
+    // Next writes one JSON array per flush; batches are normally a few KB.
+    private const int MaxScanWindowBytes = 4 * 1024 * 1024;
+
     private int _monitorStarted;
     private int _warningPublished;
-    private long _traceLength = -1;
+    private byte[] _scanWindow = new byte[InitialScanWindowBytes];
+    private long _traceOffset = -1;
     private long _monitorStartedUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     private DateTimeOffset _lastCacheMeasurement = DateTimeOffset.MinValue;
+    private long _lastCacheBytes = -1;
 
     public JavaScript.JavaScriptAppResource Resource { get; } = resource;
     public string WorkingDirectory => Resource.WorkingDirectory;
     public long CacheWarningLimitBytes { get; set; } = ByteSize.Parse("1gb");
     public long? AutomaticClearLimitBytes { get; set; }
     public TimeSpan SlowCompilationThreshold { get; set; } = TimeSpan.FromSeconds(10);
-    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(2);
-    public TimeSpan CacheSizePollInterval { get; set; } = TimeSpan.FromSeconds(30);
+    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
+    public TimeSpan CacheSizePollInterval { get; set; } = TimeSpan.FromMinutes(5);
     public bool ClearCommandAdded { get; set; }
     public bool AutomaticClearAdded { get; set; }
     public bool SlowStartDetectorAdded { get; set; }
+
+    private string TracePath => Path.Combine(WorkingDirectory, ".next", "dev", "trace");
 
     public bool TryStartMonitor() => Interlocked.Exchange(ref _monitorStarted, 1) == 0;
 
@@ -34,93 +55,212 @@ internal sealed class TurbopackDiagnosticsAnnotation(
     {
         Interlocked.Exchange(ref _warningPublished, 0);
         _monitorStartedUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        _traceLength = GetTraceLength();
+        _traceOffset = -1;
         _lastCacheMeasurement = DateTimeOffset.MinValue;
+        _lastCacheBytes = -1;
     }
 
     public async Task<TurbopackWarning?> InspectAsync(CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow;
-        if (now - _lastCacheMeasurement >= CacheSizePollInterval)
+        if (InspectCache() is { } cacheWarning) return cacheWarning;
+
+        long length;
+        try
         {
-            _lastCacheMeasurement = now;
-            var cacheBytes = TurbopackCache.GetSize(WorkingDirectory);
-            if (cacheBytes >= CacheWarningLimitBytes)
-            {
-                return new TurbopackWarning(
-                    $"Turbopack cache is {ByteSize.Format(cacheBytes)}",
-                    $"The configured warning limit is {ByteSize.Format(CacheWarningLimitBytes)}.",
-                    cacheBytes);
-            }
+            var info = new FileInfo(TracePath);
+            if (!info.Exists) return null;
+            length = info.Length;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+
+        if (_traceOffset < 0)
+        {
+            // First look. The trace carries history from previous dev sessions
+            // that the startTime filter would discard anyway, so start at the
+            // end instead of parsing weeks of spans to find nothing.
+            _traceOffset = length;
+            return null;
         }
 
-        var tracePath = Path.Combine(WorkingDirectory, ".next", "dev", "trace");
-        if (!File.Exists(tracePath)) return null;
-
-        var traceLength = new FileInfo(tracePath).Length;
-        if (traceLength == _traceLength) return null;
+        // A cleared .next or a fresh trace file leaves the offset past the end.
+        if (length < _traceOffset) _traceOffset = 0;
+        if (length == _traceOffset) return null;
 
         try
         {
-            var bytes = await File.ReadAllBytesAsync(tracePath, cancellationToken).ConfigureAwait(false);
-            var warning = FindSlowCompilation(bytes);
-            _traceLength = traceLength;
-            return warning;
+            return await ScanAppendedAsync(length, cancellationToken).ConfigureAwait(false);
         }
-        catch (JsonException)
-        {
-            // Next appends complete JSON arrays to this file. If inspection lands
-            // between writes, leave the length untouched and retry next poll.
-            return null;
-        }
-        catch (IOException)
-        {
-            return null;
-        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
     }
 
-    private TurbopackWarning? FindSlowCompilation(ReadOnlySpan<byte> bytes)
+    private async Task<TurbopackWarning?> ScanAppendedAsync(
+        long length,
+        CancellationToken cancellationToken)
+    {
+        TurbopackWarning? slowest = null;
+
+        var stream = new FileStream(
+            TracePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 1,
+            useAsync: true);
+
+        await using (stream.ConfigureAwait(false))
+        {
+            while (_traceOffset < length)
+            {
+                stream.Position = _traceOffset;
+
+                var window = (int)Math.Min(_scanWindow.Length, length - _traceOffset);
+                var read = await FillWindowAsync(stream, window, cancellationToken).ConfigureAwait(false);
+                if (read == 0) break;
+
+                var consumed = ScanBatches(_scanWindow.AsSpan(0, read), ref slowest);
+                if (consumed > 0)
+                {
+                    _traceOffset += consumed;
+                    continue;
+                }
+
+                // No complete batch in this window. Either Next is mid-write and
+                // the rest arrives before the next poll, or one batch is larger
+                // than the window.
+                if (read < _scanWindow.Length) break;
+                if (TryGrowScanWindow()) break;
+
+                // A batch exceeds the cap. Skip it rather than re-reading the
+                // same window on every poll for the rest of the session.
+                _traceOffset += read;
+                break;
+            }
+        }
+
+        return slowest;
+    }
+
+    private async Task<int> FillWindowAsync(
+        FileStream stream,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        var total = 0;
+        while (total < count)
+        {
+            var read = await stream
+                .ReadAsync(_scanWindow.AsMemory(total, count - total), cancellationToken)
+                .ConfigureAwait(false);
+            if (read == 0) break;
+            total += read;
+        }
+
+        return total;
+    }
+
+    private bool TryGrowScanWindow()
+    {
+        if (_scanWindow.Length >= MaxScanWindowBytes) return false;
+        _scanWindow = new byte[Math.Min(_scanWindow.Length * 2, MaxScanWindowBytes)];
+        return true;
+    }
+
+    /// <summary>
+    /// Scans whole trace batches out of <paramref name="bytes"/> and returns the
+    /// number of bytes covered by complete batches. A partial trailing batch is
+    /// left unconsumed so the next poll re-reads it.
+    /// </summary>
+    private long ScanBatches(ReadOnlySpan<byte> bytes, ref TurbopackWarning? slowest)
     {
         var reader = new Utf8JsonReader(bytes, new JsonReaderOptions
         {
             AllowMultipleValues = true,
         });
 
-        TurbopackWarning? slowest = null;
-        while (reader.Read())
+        long consumed = 0;
+        try
         {
-            if (reader.TokenType is not JsonTokenType.StartArray) continue;
-
-            using var batch = JsonDocument.ParseValue(ref reader);
-            foreach (var traceEvent in batch.RootElement.EnumerateArray())
+            while (reader.Read())
             {
-                if (!traceEvent.TryGetProperty("name", out var nameElement)) continue;
-                var name = nameElement.GetString();
-                if (name is not ("compile-path" or "ensure-page")) continue;
+                if (reader.TokenType is not JsonTokenType.StartArray) continue;
 
-                if (!traceEvent.TryGetProperty("startTime", out var startElement) ||
-                    startElement.GetDouble() < _monitorStartedUnixMilliseconds)
-                {
-                    continue;
-                }
-
-                if (!traceEvent.TryGetProperty("duration", out var durationElement)) continue;
-                var duration = TimeSpan.FromMilliseconds(durationElement.GetDouble() / 1_000d);
-                if (duration < SlowCompilationThreshold) continue;
-
-                var target = TraceTarget(traceEvent, name);
-                if (slowest is null || duration > slowest.Duration)
-                {
-                    slowest = new TurbopackWarning(
-                        $"Slow Next.js compile: {duration.TotalSeconds:F1}s",
-                        $"{target} exceeded the {SlowCompilationThreshold.TotalSeconds:F0}s threshold.",
-                        TurbopackCache.GetSize(WorkingDirectory),
-                        duration);
-                }
+                using var batch = JsonDocument.ParseValue(ref reader);
+                consumed = reader.BytesConsumed;
+                InspectBatch(batch.RootElement, ref slowest);
             }
+
+            consumed = reader.BytesConsumed;
+        }
+        catch (JsonException)
+        {
+            // Next appends complete JSON arrays. Landing between writes leaves a
+            // partial trailing value; everything up to the last complete batch
+            // is valid and the remainder is picked up on the next poll.
         }
 
-        return slowest;
+        return consumed;
+    }
+
+    private void InspectBatch(JsonElement batch, ref TurbopackWarning? slowest)
+    {
+        foreach (var traceEvent in batch.EnumerateArray())
+        {
+            if (!traceEvent.TryGetProperty("name", out var nameElement)) continue;
+            var name = nameElement.GetString();
+            if (name is not ("compile-path" or "ensure-page")) continue;
+
+            // Next records startTime as Unix milliseconds and duration as
+            // microseconds.
+            if (!traceEvent.TryGetProperty("startTime", out var startElement) ||
+                startElement.GetDouble() < _monitorStartedUnixMilliseconds)
+            {
+                continue;
+            }
+
+            if (!traceEvent.TryGetProperty("duration", out var durationElement)) continue;
+            var duration = TimeSpan.FromMilliseconds(durationElement.GetDouble() / 1_000d);
+            if (duration < SlowCompilationThreshold) continue;
+
+            if (slowest is null || duration > slowest.Duration)
+            {
+                slowest = new TurbopackWarning(
+                    $"Slow Next.js compile: {duration.TotalSeconds:F1}s",
+                    $"{TraceTarget(traceEvent, name)} exceeded the {SlowCompilationThreshold.TotalSeconds:F0}s threshold.",
+                    LastMeasuredCacheBytes(),
+                    duration);
+            }
+        }
+    }
+
+    private TurbopackWarning? InspectCache()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastCacheMeasurement < CacheSizePollInterval) return null;
+
+        _lastCacheMeasurement = now;
+        _lastCacheBytes = TurbopackCache.GetSize(WorkingDirectory);
+        if (_lastCacheBytes < CacheWarningLimitBytes) return null;
+
+        return new TurbopackWarning(
+            $"Turbopack cache is {ByteSize.Format(_lastCacheBytes)}",
+            $"The configured warning limit is {ByteSize.Format(CacheWarningLimitBytes)}.",
+            _lastCacheBytes);
+    }
+
+    /// <summary>
+    /// The most recent cache measurement, taken on the cache poll interval. A
+    /// slow-compile warning reports it rather than walking the cache tree again
+    /// for every candidate span.
+    /// </summary>
+    private long LastMeasuredCacheBytes()
+    {
+        if (_lastCacheBytes >= 0) return _lastCacheBytes;
+
+        _lastCacheMeasurement = DateTimeOffset.UtcNow;
+        _lastCacheBytes = TurbopackCache.GetSize(WorkingDirectory);
+        return _lastCacheBytes;
     }
 
     private static string TraceTarget(JsonElement traceEvent, string fallback)
@@ -135,12 +275,6 @@ internal sealed class TurbopackDiagnosticsAnnotation(
         }
 
         return fallback;
-    }
-
-    private long GetTraceLength()
-    {
-        var path = Path.Combine(WorkingDirectory, ".next", "dev", "trace");
-        return File.Exists(path) ? new FileInfo(path).Length : -1;
     }
 }
 
@@ -161,14 +295,28 @@ internal static class TurbopackCache
 
             try
             {
-                foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+                // FileSystemEnumerable reports the size from the directory entry
+                // the OS already read, so this walk allocates neither a path
+                // string nor a FileInfo per file.
+                var files = new FileSystemEnumerable<long>(
+                    directory,
+                    static (ref FileSystemEntry entry) => entry.Length,
+                    new EnumerationOptions
+                    {
+                        RecurseSubdirectories = true,
+                        IgnoreInaccessible = true,
+                        AttributesToSkip = FileAttributes.ReparsePoint,
+                    })
+                {
+                    ShouldIncludePredicate = static (ref FileSystemEntry entry) => !entry.IsDirectory,
+                };
+
+                foreach (var length in files)
                 {
                     try
                     {
-                        total = checked(total + new FileInfo(file).Length);
+                        total = checked(total + length);
                     }
-                    catch (IOException) { }
-                    catch (UnauthorizedAccessException) { }
                     catch (OverflowException) { return long.MaxValue; }
                 }
             }

@@ -4,6 +4,6 @@
     <Description>Aspire hosting integration for the disposable Agentics API, Keycloak, and hosted-Git integration testkit.</Description>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting" Version="13.5.2" />
   </ItemGroup>
 </Project>

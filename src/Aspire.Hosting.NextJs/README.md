@@ -12,6 +12,8 @@ var web = builder.AddNodeApp("web", "../web", "unused")
     .WithNextJsDefaults()
     .WithNpm(install: true)
     .WithRunScript("dev")
+    .WithClearUserDataCommand("../.dev-user-data")
+    .WithClearNextBuildCommand("../web", ".next", ".next-e2e")
     .WithTurbopackTracing()
     .ClearTurbopackCache(limit: "1gb")
     .WithSlowStartDetector(options =>
@@ -36,6 +38,13 @@ var web = builder.AddNodeApp("web", "../web", "unused")
 - `WithTurbopackTracing()` sets `NEXT_TURBOPACK_TRACING=1`. Next writes the
   detailed binary trace to `.next/dev/trace-turbopack`; open it with
   `npx next internal trace .next/dev/trace-turbopack`.
+- `WithClearUserDataCommand()` adds a local-only **Clear User Data** command.
+  It stops Next.js, moves the current directory to a timestamped backup,
+  creates an empty directory, and starts Next.js again.
+- `WithClearNextBuildCommand()` adds a local-only **Clear .next & Restart**
+  command. It stops Next.js, removes the named generated `.next*` directories,
+  and starts Next.js again. Directory names must be direct children of the
+  supplied working directory.
 - `ClearTurbopackCache(limit: "1gb")` adds a highlighted **Clear Turbopack
   cache** resource command. It also clears the generated cache before AppHost
   startup when it has reached the limit. The dashboard command stops Next.js,
@@ -44,6 +53,23 @@ var web = builder.AddNodeApp("web", "../web", "unused")
   completed `compile-path` and `ensure-page` spans. A slow compile or oversized
   cache writes a warning to the resource log, adds diagnostic resource
   properties, and sends an Aspire notification linking to the resource command.
+
+The detector reads the trace **incrementally**. Next never truncates
+`.next/dev/trace` — it appends across `next dev` restarts and keeps weeks of
+history — so the detector starts at the end of the file and each poll reads only
+the bytes appended since the last one, through a single reused 64 KB window that
+stays below the large-object-heap threshold. A poll that lands mid-write leaves
+the partial trailing batch unconsumed and picks it up next time.
+
+This matters for long-lived AppHosts. Reading the whole file on every change
+costs O(file) per append into a fresh, ever-larger array; on a two-day session
+that is gigabytes of large-object allocations whose holes the GC sweeps but does
+not compact. Measured on a real 7.2 MB / 600-batch trace: 7.2 MB consumed
+incrementally against ~2.1 GB re-read the old way.
+
+The cache measurement is separate and far coarser (`CacheSizePollInterval`,
+5 minutes by default) because it walks the generated cache tree. A slow-compile
+warning reports the most recent measurement rather than walking it again.
 
 The detector deliberately reads the lightweight JSON trace rather than parsing
 `trace-turbopack`: the latter is a large binary diagnostic intended for the Next
