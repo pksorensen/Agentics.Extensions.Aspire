@@ -1,0 +1,9 @@
+name: byg
+description: Test scaffold scenario.
+trigger:
+  promptRegex: '(?i)^\s*byg\s+(.+)$'
+steps:
+  - text: "Jeg bygger $prompt."
+    calls:
+      - shell: "mkdir -p $slug"
+  - text: "Færdig med $slug."

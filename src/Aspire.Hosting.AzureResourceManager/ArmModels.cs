@@ -39,7 +39,10 @@ public sealed record ArmProviderRequest(
     string ProviderNamespace,
     string ResourcePath,
     string? ApiVersion,
-    JsonElement? Body);
+    JsonElement? Body,
+    // Optional so providers written before it keep compiling. Query-shaped APIs
+    // (Azure Monitor metrics: timespan, interval, metricnames, $filter) need it.
+    IReadOnlyDictionary<string, string>? Query = null);
 
 public sealed record ArmProviderResponse(int StatusCode, object? Body = null)
 {

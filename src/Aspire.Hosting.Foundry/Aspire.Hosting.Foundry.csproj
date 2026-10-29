@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.Foundry</PackageId>
+    <Description>Aspire hosting and emulator for Azure AI Foundry / Azure OpenAI: OpenAI-compatible data plane (Responses incl. streaming, Chat Completions), scripted LLM playback for coding agents, per-caller token usage, and a Microsoft.CognitiveServices ARM provider.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.5.3" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <ProjectReference Include="../Aspire.Hosting.MicrosoftTenant/Aspire.Hosting.MicrosoftTenant.csproj" />
+    <ProjectReference Include="../Aspire.Hosting.AzureResourceManager/Aspire.Hosting.AzureResourceManager.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Foundry.Emulator.Tests" />
+  </ItemGroup>
+</Project>

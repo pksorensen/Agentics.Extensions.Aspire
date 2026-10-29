@@ -1,0 +1,269 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+
+namespace Aspire.Hosting.Foundry.Emulator;
+
+/// <summary>What the playback engine needs to know about a request, independent of
+/// whether it arrived as Responses or Chat Completions.</summary>
+internal sealed class ConversationView
+{
+    public required string Deployment { get; init; }
+    public required IReadOnlyList<AdvertisedTool> Tools { get; init; }
+    public required IReadOnlyList<string> UserTexts { get; init; }
+
+    /// <summary>The step the history says comes next — see <see cref="FoundryScenario"/>.</summary>
+    public required int HistoryStep { get; init; }
+    public required string SessionKey { get; init; }
+    public required long RequestBytes { get; init; }
+}
+
+internal sealed record AdvertisedTool(string Name, string Kind);
+
+internal abstract record PlannedItem(string Id);
+internal sealed record PlannedReasoning(string Id, string Text) : PlannedItem(Id);
+internal sealed record PlannedMessage(string Id, string Text) : PlannedItem(Id);
+internal sealed record PlannedFunctionCall(string Id, string CallId, string Name, string Arguments) : PlannedItem(Id);
+internal sealed record PlannedCustomCall(string Id, string CallId, string Name, string Input) : PlannedItem(Id);
+
+internal sealed class TurnPlan
+{
+    public List<PlannedItem> Items { get; } = [];
+    public FoundryScenarioError? Error { get; init; }
+    public string? Scenario { get; init; }
+    public int Step { get; init; }
+    public FoundryScenarioUsage? UsageOverride { get; init; }
+    public int ChunkSize { get; init; } = 24;
+    public int DelayMs { get; init; }
+}
+
+/// <summary>
+/// Turns (scenario, conversation) into the next assistant turn. Holds one piece of
+/// state only: which error steps have already been served to a session, because an
+/// error leaves no trace in the history the client re-sends and would otherwise be
+/// served forever.
+/// </summary>
+public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
+{
+    internal const string CallIdPrefix = "call_sim_";
+    private static readonly Regex StepMarker = new(@"^call_sim_s(\d+)_", RegexOptions.Compiled);
+    private readonly ConcurrentDictionary<string, byte> _servedErrors = new(StringComparer.Ordinal);
+
+    public FoundryScenarioStore Scenarios => scenarios;
+
+    /// <summary>Directive grammar shared with the agent gateway's Anthropic simulator:
+    /// <c>echo</c>, <c>scenario:&lt;name&gt;</c>.</summary>
+    internal TurnPlan Plan(ConversationView view, string? directive, string? deploymentScenario, int chunkSize, int delayMs)
+    {
+        FoundryScenario? scenario = null;
+        Match? trigger = null;
+        if (!string.IsNullOrWhiteSpace(directive))
+        {
+            var name = directive.StartsWith("scenario:", StringComparison.OrdinalIgnoreCase) ? directive[9..] : directive;
+            scenario = scenarios.Find(name.Trim());
+            if (scenario is null)
+                return new TurnPlan { Error = new FoundryScenarioError { Status = 404, Code = "scenario_not_found", Message = $"No emulator scenario named '{name}'." } };
+        }
+        else if (!string.IsNullOrWhiteSpace(deploymentScenario))
+        {
+            scenario = scenarios.Find(deploymentScenario);
+        }
+
+        var firstUser = view.UserTexts.FirstOrDefault() ?? "";
+        if (scenario is null && scenarios.MatchTrigger(firstUser, view.Deployment) is { } hit)
+        {
+            scenario = hit.Scenario;
+            trigger = hit.Match;
+        }
+        else if (scenario?.Trigger?.PromptRegex is { Length: > 0 } pattern)
+        {
+            var m = Regex.Match(firstUser, pattern);
+            if (m.Success) trigger = m;
+        }
+
+        if (scenario is null) return Fallback(view, chunkSize, delayMs, null);
+
+        var index = view.HistoryStep;
+        // Skip error steps this session has already been given.
+        while (index < scenario.Steps.Count && scenario.Steps[index].Error is not null &&
+               _servedErrors.ContainsKey($"{view.SessionKey}|{scenario.Name}|{index}"))
+            index++;
+
+        if (index >= scenario.Steps.Count)
+        {
+            switch (scenario.OnExhausted.ToLowerInvariant())
+            {
+                case "last" when scenario.Steps.Count > 0:
+                    index = scenario.Steps.Count - 1;
+                    break;
+                case "error":
+                    return new TurnPlan { Scenario = scenario.Name, Step = index, Error = new FoundryScenarioError { Status = 400, Code = "scenario_exhausted", Message = $"Scenario '{scenario.Name}' has no step {index}." } };
+                default:
+                    return Fallback(view, chunkSize, delayMs, scenario.Name);
+            }
+        }
+
+        var step = scenario.Steps[index];
+        if (step.Error is { } error)
+        {
+            _servedErrors[$"{view.SessionKey}|{scenario.Name}|{index}"] = 0;
+            return new TurnPlan { Scenario = scenario.Name, Step = index, Error = error };
+        }
+
+        var plan = new TurnPlan
+        {
+            Scenario = scenario.Name,
+            Step = index,
+            UsageOverride = step.Usage,
+            ChunkSize = step.ChunkSize ?? chunkSize,
+            DelayMs = step.DelayMs ?? delayMs,
+        };
+
+        string Sub(string text) => Substitute(text, view, trigger, index);
+        if (!string.IsNullOrEmpty(step.Reasoning))
+            plan.Items.Add(new PlannedReasoning(NewId("rs"), Sub(step.Reasoning)));
+        if (!string.IsNullOrEmpty(step.Text))
+            plan.Items.Add(new PlannedMessage(NewId("msg"), Sub(step.Text)));
+
+        var n = 0;
+        foreach (var call in step.Calls)
+        {
+            var callId = $"{CallIdPrefix}s{index}_{n++}_{RandomNumberGenerator.GetHexString(8, lowercase: true)}";
+            plan.Items.Add(ResolveCall(call, view.Tools, callId, Sub));
+        }
+        return plan;
+    }
+
+    private static TurnPlan Fallback(ConversationView view, int chunkSize, int delayMs, string? scenario)
+    {
+        var last = view.UserTexts.LastOrDefault();
+        var text = string.IsNullOrWhiteSpace(last)
+            ? "This is the Foundry emulator. No scenario matched, so this is a placeholder reply."
+            : $"[Foundry emulator · {view.Deployment}] No scenario matched. You said: {Truncate(last, 400)}";
+        var plan = new TurnPlan { Scenario = scenario, Step = -1, ChunkSize = chunkSize, DelayMs = delayMs };
+        plan.Items.Add(new PlannedMessage(NewId("msg"), text));
+        return plan;
+    }
+
+    private static PlannedItem ResolveCall(FoundryScenarioCall call, IReadOnlyList<AdvertisedTool> tools, string callId, Func<string, string> sub)
+    {
+        AdvertisedTool? Find(params string[] names) =>
+            names.Select(n => tools.FirstOrDefault(t => t.Name.Equals(n, StringComparison.OrdinalIgnoreCase)))
+                 .FirstOrDefault(t => t is not null);
+
+        if (call.Function is { Length: > 0 } fn)
+        {
+            var name = fn.StartsWith("$toolMatching:", StringComparison.Ordinal)
+                ? tools.FirstOrDefault(t => t.Name.Contains(fn[14..], StringComparison.OrdinalIgnoreCase))?.Name ?? fn[14..]
+                : fn;
+            var args = call.Arguments is null ? "{}" : sub(call.Arguments.ToJsonString(FoundryDataPlane.Wire));
+            var tool = Find(name);
+            return tool?.Kind == "custom"
+                ? new PlannedCustomCall(NewId("ctc"), callId, name, call.Arguments is JsonValue v && v.TryGetValue<string>(out var s) ? sub(s) : args)
+                : new PlannedFunctionCall(NewId("fc"), callId, name, args);
+        }
+
+        if (call.ApplyPatch is { Length: > 0 } patch)
+            return Patch(sub(patch));
+
+        if (call.WriteFile is { } file)
+        {
+            var path = sub(file.Path);
+            var content = sub(file.Content);
+            if (Find("apply_patch") is not null)
+            {
+                var body = new StringBuilder();
+                body.Append("*** Begin Patch\n*** Add File: ").Append(path).Append('\n');
+                foreach (var line in content.Replace("\r\n", "\n").TrimEnd('\n').Split('\n'))
+                    body.Append('+').Append(line).Append('\n');
+                body.Append("*** End Patch\n");
+                return Patch(body.ToString());
+            }
+            var dir = Path.GetDirectoryName(path.Replace('\\', '/'));
+            var marker = "FOUNDRY_EMULATOR_EOF";
+            var script = (string.IsNullOrEmpty(dir) ? "" : $"mkdir -p '{dir}' && ") +
+                         $"cat > '{path}' <<'{marker}'\n{content.TrimEnd('\n')}\n{marker}";
+            return Shell(script);
+        }
+
+        if (call.Shell is { Length: > 0 } command)
+            return Shell(sub(command));
+
+        return new PlannedFunctionCall(NewId("fc"), callId, "noop", "{}");
+
+        PlannedItem Patch(string body)
+        {
+            var tool = Find("apply_patch");
+            if (tool?.Kind == "custom") return new PlannedCustomCall(NewId("ctc"), callId, tool.Name, body);
+            if (tool is not null) return new PlannedFunctionCall(NewId("fc"), callId, tool.Name, Json(new JsonObject { ["input"] = body }));
+            // No apply_patch tool: Codex still intercepts `apply_patch` run through its shell.
+            return Shell($"apply_patch <<'PATCH'\n{body.TrimEnd('\n')}\nPATCH");
+        }
+
+        PlannedItem Shell(string command)
+        {
+            if (Find("exec_command") is { } exec)
+                return new PlannedFunctionCall(NewId("fc"), callId, exec.Name, Json(new JsonObject { ["cmd"] = command }));
+            if (Find("shell", "container.exec", "shell_command") is { } shell)
+                return new PlannedFunctionCall(NewId("fc"), callId, shell.Name,
+                    shell.Name == "shell_command"
+                        ? Json(new JsonObject { ["command"] = command })
+                        : Json(new JsonObject { ["command"] = new JsonArray("bash", "-lc", command) }));
+            if (Find("local_shell") is { } local)
+                return new PlannedFunctionCall(NewId("fc"), callId, local.Name, Json(new JsonObject { ["command"] = new JsonArray("bash", "-lc", command) }));
+            return new PlannedFunctionCall(NewId("fc"), callId, "exec_command", Json(new JsonObject { ["cmd"] = command }));
+        }
+    }
+
+    private static string Json(JsonNode node) => node.ToJsonString(FoundryDataPlane.Wire);
+
+    private static string Substitute(string text, ConversationView view, Match? trigger, int step)
+    {
+        var first = view.UserTexts.FirstOrDefault() ?? "";
+        var prompt = trigger is { Groups.Count: > 1 } && trigger.Groups[1].Success ? trigger.Groups[1].Value.Trim() : first;
+        return text
+            .Replace("$lastUserText", view.UserTexts.LastOrDefault() ?? "", StringComparison.Ordinal)
+            .Replace("$firstUserText", first, StringComparison.Ordinal)
+            .Replace("$prompt", prompt, StringComparison.Ordinal)
+            .Replace("$slug", Slug(prompt), StringComparison.Ordinal)
+            .Replace("$model", view.Deployment, StringComparison.Ordinal)
+            .Replace("$step", step.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    internal static string Slug(string text)
+    {
+        var slug = Regex.Replace(text.ToLowerInvariant(), "[^a-z0-9æøå]+", "-").Trim('-');
+        slug = slug.Replace("æ", "ae").Replace("ø", "oe").Replace("å", "aa");
+        return slug.Length == 0 ? "app" : slug.Length > 40 ? slug[..40].TrimEnd('-') : slug;
+    }
+
+    internal static string NewId(string prefix) => $"{prefix}_{RandomNumberGenerator.GetHexString(24, lowercase: true)}";
+
+    private static string Truncate(string text, int max) => text.Length <= max ? text : text[..max] + "…";
+
+    /// <summary>The step implied by a history: each assistant message is one turn,
+    /// and a tool call stamped by this emulator says exactly which step produced it.</summary>
+    internal static int HistoryStepFrom(IEnumerable<(string Kind, string? CallId)> history)
+    {
+        var index = 0;
+        foreach (var (kind, callId) in history)
+        {
+            if (kind == "assistant") index++;
+            else if (kind == "call" && callId is not null && StepMarker.Match(callId) is { Success: true } m &&
+                     int.TryParse(m.Groups[1].Value, out var stepped))
+                index = Math.Max(index, stepped + 1);
+            else if (kind == "call") index++;
+        }
+        return index;
+    }
+
+    internal static string SessionKeyFrom(string? explicitKey, IEnumerable<string> userTexts)
+    {
+        if (!string.IsNullOrWhiteSpace(explicitKey)) return explicitKey;
+        var first = userTexts.FirstOrDefault() ?? "";
+        return "h:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(first)))[..16];
+    }
+}

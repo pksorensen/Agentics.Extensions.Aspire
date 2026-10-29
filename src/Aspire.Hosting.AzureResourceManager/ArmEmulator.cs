@@ -116,7 +116,8 @@ public static class AzureResourceManagerEmulatorExtensions
             providerNamespace,
             providerPath,
             http.Query["api-version"].ToString(),
-            body);
+            body,
+            http.Query.ToDictionary(item => item.Key, item => item.Value.ToString(), StringComparer.OrdinalIgnoreCase));
 
         foreach (var registration in registrations.Where(item =>
                      string.Equals(item.ProviderNamespace, providerNamespace, StringComparison.OrdinalIgnoreCase)))

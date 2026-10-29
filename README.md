@@ -22,6 +22,7 @@ used across the Agentics platform, published to NuGet so any AppHost can consume
 | [`Agentics.Extensions.Aspire.AzureResourceManager`](src/Aspire.Hosting.AzureResourceManager/) | Extensible ARM routing with composable, API-version-aware provider emulators. |
 | [`Agentics.Extensions.Aspire.Registry`](src/Aspire.Hosting.Registry/) | `UseAgenticsRegistry()` — checks before startup whether this machine can pull the AppHost's private images, and puts the sign-in steps in the dashboard when it cannot. |
 | [`Agentics.Extensions.Aspire.FordConnect`](src/Aspire.Hosting.FordConnect/) | An emulated FordConnect 2.0 — the account-link door, the B2C token endpoint and the Query API — with Ford's measured rate limit, twenty-minute access tokens, and a browser portal for driving the car. |
+| [`Agentics.Extensions.Aspire.Foundry`](src/Aspire.Hosting.Foundry/) | An emulated Azure AI Foundry / Azure OpenAI — `/openai/v1/responses` (streaming SSE), chat completions in v1 and dated form, scripted playback so a coding agent such as Codex gets a deterministic sequence of replies and tool calls, a per-customer usage log, and `Microsoft.CognitiveServices` + `Microsoft.Insights` metrics over ARM. Accepts api-keys, gateway subscription keys and the tenant emulator's Entra tokens. |
 | [`Agentics.Extensions.Aspire.Stripe`](src/Aspire.Hosting.Stripe/) | `AddStripeListen` — the Stripe CLI as Aspire-managed webhook listeners, standard **and** Connect, installing the CLI itself when it is missing instead of failing with `executable file not found in $PATH`. |
 | [`Agentics.Extensions.Aspire.UserData`](src/Aspire.Hosting.UserData/) | `WithUserData` — points a file-backed app at its data directory and adds a dashboard command that pulls a redacted copy of production down over SSH, so debugging against real data does not mean carrying real credentials. `aspire start -- --sync-prod` fetches before anything starts, so a release can be rehearsed against production's data at boot. |
 | [`Agentics.Extensions.Aspire.Declare`](src/Aspire.Hosting.Agentics.Declare/) | `AddAgenticsDeclare` / `AddAgenticsCapability` — the AppHost declares which parameters it needs and what kind of credential would satisfy them, in a dependency-free pipeline step that starts nothing. [`pks aspire run`](https://github.com/pksorensen/pks-cli) reads that and starts the real run with the answers already in the environment, so no endpoint or key is pasted, prompted for, or left in user secrets. |
@@ -43,6 +44,7 @@ dotnet add package Agentics.Extensions.Aspire.MicrosoftGraph
 dotnet add package Agentics.Extensions.Aspire.AzureResourceManager
 dotnet add package Agentics.Extensions.Aspire.Registry
 dotnet add package Agentics.Extensions.Aspire.FordConnect
+dotnet add package Agentics.Extensions.Aspire.Foundry
 dotnet add package Agentics.Extensions.Aspire.Stripe
 dotnet add package Agentics.Extensions.Aspire.UserData
 dotnet add package Agentics.Extensions.Aspire.Declare
