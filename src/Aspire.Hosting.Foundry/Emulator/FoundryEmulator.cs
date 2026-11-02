@@ -150,7 +150,7 @@ public static class FoundryEmulatorExtensions
         // ---- keys / gateway subscriptions ----
         api.MapGet("/keys", (FoundryState state) => state.GatewayKeys.Values.OrderBy(k => k.Name).Select(k => new
         {
-            k.Name, k.Customer, k.Project, k.SubscriptionId, k.UserPrincipal, k.Initiative,
+            k.Name, k.Customer, k.Project, k.SubscriptionId, k.UserPrincipal, k.Initiative, k.Context,
         }));
 
         api.MapPost("/keys", async (HttpRequest request, FoundryState state) =>
@@ -162,7 +162,7 @@ public static class FoundryEmulatorExtensions
             var subscription = body.SubscriptionId
                 ?? string.Join("-", new[] { body.Customer, body.Initiative is null ? null : "-" + body.Initiative, upnLocal }.Where(x => !string.IsNullOrEmpty(x)));
             var key = body.Key ?? Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-            var seed = new FoundryApiKeySeed(body.Name ?? subscription, key, body.Customer, body.Project, subscription, body.UserPrincipal, body.Initiative);
+            var seed = new FoundryApiKeySeed(body.Name ?? subscription, key, body.Customer, body.Project, subscription, body.UserPrincipal, body.Initiative, body.Context);
             state.GatewayKeys[key] = seed;
             return Results.Ok(new { name = seed.Name, subscriptionId = subscription, primaryKey = key, customer = seed.Customer, userPrincipal = seed.UserPrincipal });
         });
@@ -256,5 +256,9 @@ public static class FoundryEmulatorExtensions
         public string? UserPrincipal { get; set; }
         public string? Initiative { get; set; }
         public string? Key { get; set; }
+
+        /// <summary>What a coding agent on this key is told about its project: <c>label</c>, the name
+        /// <see cref="FoundryScenarioCall.AskProject"/> offers, and <c>gitRemote</c>.</summary>
+        public Dictionary<string, string>? Context { get; set; }
     }
 }

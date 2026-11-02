@@ -149,6 +149,33 @@ public sealed class EmulatorTests(EmulatorFixture fixture)
     }
 
     [Fact]
+    public async Task Ask_project_offers_the_callers_projects_and_wires_the_chosen_remote()
+    {
+        async Task<string> Mint(string label, string remote) => (await (await _client.PostAsJsonAsync("/_emulator/keys",
+            new { customer = "sol-" + label.Length, userPrincipal = "vibe@example.test", context = new { label, gitRemote = remote } },
+            TestContext.Current.CancellationToken)).Content.ReadFromJsonAsync<JsonNode>(TestContext.Current.CancellationToken))!["primaryKey"]!.GetValue<string>();
+        var key = await Mint("Cockpit / Web", "http://git/cockpit.git");
+        await Mint("Cockpit 2 / Web", "http://git/cockpit-2.git");
+
+        async Task<JsonArray> Send(object[] input)
+        {
+            var tools = new object[] { new { type = "function", name = "shell_command", parameters = new { type = "object" } }, new { type = "function", name = "request_user_input", parameters = new { type = "object" } } };
+            var response = await _client.SendAsync(Post("/openai/v1/responses", new { model = "gpt-test", stream = false, tools, prompt_cache_key = "projekt", input }, key, "Ocp-Apim-Subscription-Key"),
+                TestContext.Current.CancellationToken);
+            return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["output"]!.AsArray();
+        }
+
+        var ask = await Send([UserText("nyt projekt")]);
+        var call = ask.First(o => o!["type"]!.GetValue<string>() == "function_call")!;
+        var options = JsonNode.Parse(call["arguments"]!.GetValue<string>())!["questions"]![0]!["options"]!.AsArray().Select(o => o!["label"]!.GetValue<string>()).ToList();
+        Assert.Equal(["Cockpit / Web", "Cockpit 2 / Web"], options);
+
+        var wired = await Send([UserText("nyt projekt"), .. ask.Select(o => JsonNode.Parse(o!.ToJsonString())!),
+            new { type = "function_call_output", call_id = call["call_id"]!.GetValue<string>(), output = "{\"answers\":{\"project\":{\"answers\":[\"Cockpit 2 / Web\"]}}}" }]);
+        Assert.Contains("git remote add origin http://git/cockpit-2.git", wired.ToJsonString());
+    }
+
+    [Fact]
     public async Task Bash_agent_keeps_the_heredoc_and_the_bash_command()
     {
         var context = EnvironmentContext("bash", "/home/demo/app");

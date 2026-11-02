@@ -1,0 +1,14 @@
+name: projekt
+description: Test scenario that asks which project this is, then adds its repository as the remote.
+trigger:
+  promptRegex: '(?i)^\s*nyt\s+projekt'
+steps:
+  - text: "Hvilket projekt?"
+    calls:
+      - askProject:
+          question: "Which project is this for?"
+  - when: '.'
+    text: "Kobler $projectName på."
+    calls:
+      - shell: "git remote add origin $projectRemote"
+  - text: "Færdig."

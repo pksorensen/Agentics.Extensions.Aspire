@@ -58,7 +58,8 @@ public sealed record FoundryApiKeySeed(
     string? Project = null,
     string? SubscriptionId = null,
     string? UserPrincipal = null,
-    string? Initiative = null);
+    string? Initiative = null,
+    IReadOnlyDictionary<string, string>? Context = null);
 
 /// <summary>Maps an Entra caller (app id or object id) to a customer/project.</summary>
 public sealed record FoundryCallerSeed(

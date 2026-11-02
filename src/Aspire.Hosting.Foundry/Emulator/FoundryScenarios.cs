@@ -43,7 +43,8 @@ public sealed class FoundryScenarioStep
     /// <summary>Assistant text for this turn. Substitutions: <c>$lastUserText</c>,
     /// <c>$firstUserText</c>, <c>$prompt</c> (the trigger's capture group 1, else the
     /// first user text), <c>$model</c>, <c>$step</c>, <c>$cwdUrl</c> (the agent's working
-    /// folder as a <c>file://</c> URL, empty when the request does not say).</summary>
+    /// folder as a <c>file://</c> URL, empty when the request does not say), <c>$projectName</c> and
+    /// <c>$projectRemote</c> (the project an <see cref="FoundryScenarioCall.AskProject"/> was answered with).</summary>
     public string? Text { get; set; }
 
     /// <summary>A reasoning summary, streamed as a <c>reasoning</c> item.</summary>
@@ -86,6 +87,11 @@ public sealed class FoundryScenarioCall
     /// advertised, otherwise a shell heredoc, or a here-string when the agent's shell is PowerShell.</summary>
     public FoundryScenarioFile? WriteFile { get; set; }
 
+    /// <summary>Ask which of the caller's projects this is: a <c>request_user_input</c> whose options
+    /// are the projects the caller holds keys for. The answer then fills <c>$projectName</c> and
+    /// <c>$projectRemote</c> in every later step.</summary>
+    public FoundryScenarioAsk? AskProject { get; set; }
+
     /// <summary>A raw <c>*** Begin Patch</c> body for <c>apply_patch</c>.</summary>
     public string? ApplyPatch { get; set; }
 
@@ -93,6 +99,16 @@ public sealed class FoundryScenarioCall
     /// may be <c>$toolMatching:&lt;substring&gt;</c>.</summary>
     public string? Function { get; set; }
     public JsonNode? Arguments { get; set; }
+}
+
+public sealed class FoundryScenarioAsk
+{
+    public string Id { get; set; } = "project";
+    public string Header { get; set; } = "Project";
+    public string Question { get; set; } = "Which project is this for?";
+    public string OptionDescription { get; set; } = "Push to this project's repository.";
+    public string Other { get; set; } = "Something else";
+    public string OtherDescription { get; set; } = "Not one of these.";
 }
 
 public sealed class FoundryScenarioFile

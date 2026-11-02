@@ -29,12 +29,44 @@ internal sealed class ConversationView
     /// <see cref="FoundryScenarioStep.When"/>.</summary>
     public string? LastReply { get; init; }
 
+    /// <summary>Every typed message and tool output, oldest first, for finding which project an
+    /// earlier <see cref="FoundryScenarioCall.AskProject"/> was answered with.</summary>
+    public IReadOnlyList<string> Replies { get; init; } = [];
+
+    /// <summary>The projects the caller may work on, their own key's first. See <see cref="FoundryProjectChoice"/>.</summary>
+    public IReadOnlyList<FoundryProjectChoice> Projects { get; set; } = [];
+
+    /// <summary>The project the conversation picked: the one whose label a reply names, longest label first.</summary>
+    public FoundryProjectChoice? Project => Projects
+        .OrderByDescending(p => p.Label.Length)
+        .FirstOrDefault(p => Replies.Any(r => r.Contains(p.Label, StringComparison.OrdinalIgnoreCase)));
+
     /// <summary>Codex on Windows runs every command in PowerShell, where a bash heredoc fails.</summary>
     public bool IsPowerShell => Shell is { } s
         && (s.Contains("powershell", StringComparison.OrdinalIgnoreCase) || s.Contains("pwsh", StringComparison.OrdinalIgnoreCase));
 }
 
 internal sealed record AdvertisedTool(string Name, string Kind);
+
+/// <summary>A project a caller holds a key for, from that key's <c>context</c>.</summary>
+public sealed record FoundryProjectChoice(string Label, string? GitRemote)
+{
+    /// <summary>The caller's projects: every key with a <c>label</c> held by the same person, their
+    /// own key first, then by name. Three at most, which is what <c>request_user_input</c> takes.</summary>
+    internal static IReadOnlyList<FoundryProjectChoice> For(FoundryState state, FoundryCaller caller)
+    {
+        if (string.IsNullOrEmpty(caller.UserPrincipal)) return [];
+        static FoundryProjectChoice? Of(FoundryApiKeySeed k) =>
+            k.Context?.TryGetValue("label", out var label) == true && label.Length > 0
+                ? new FoundryProjectChoice(label, k.Context.TryGetValue("gitRemote", out var remote) ? remote : null)
+                : null;
+        var keys = state.GatewayKeys.Values
+            .Where(k => string.Equals(k.UserPrincipal, caller.UserPrincipal, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(k => string.Equals(k.SubscriptionId, caller.SubscriptionId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(k => k.Name, StringComparer.Ordinal);
+        return keys.Select(Of).OfType<FoundryProjectChoice>().DistinctBy(p => p.Label).Take(3).ToList();
+    }
+}
 
 internal abstract record PlannedItem(string Id);
 internal sealed record PlannedReasoning(string Id, string Text) : PlannedItem(Id);
@@ -193,6 +225,9 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
                 : new PlannedFunctionCall(NewId("fc"), callId, name, args);
         }
 
+        if (call.AskProject is { } ask)
+            return new PlannedFunctionCall(NewId("fc"), callId, Find("request_user_input")?.Name ?? "request_user_input", Json(AskProject(ask, view, sub)));
+
         if (call.ApplyPatch is { Length: > 0 } patch)
             return Patch(sub(patch));
 
@@ -274,6 +309,29 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
 
     private static string Json(JsonNode node) => node.ToJsonString(FoundryDataPlane.Wire);
 
+    // request_user_input wants two or three options. With one project the second is a way out, with
+    // none the question still asks, so the scenario's gate can take a typed answer instead.
+    private static JsonObject AskProject(FoundryScenarioAsk ask, ConversationView view, Func<string, string> sub)
+    {
+        var options = new JsonArray();
+        foreach (var p in view.Projects)
+            options.Add(new JsonObject { ["label"] = p.Label, ["description"] = sub(ask.OptionDescription) });
+        if (options.Count < 2)
+            options.Add(new JsonObject { ["label"] = sub(ask.Other), ["description"] = sub(ask.OtherDescription) });
+        if (options.Count < 2)
+            options.Add(new JsonObject { ["label"] = "Skip", ["description"] = "Answer in the chat instead." });
+        return new JsonObject
+        {
+            ["questions"] = new JsonArray(new JsonObject
+            {
+                ["id"] = ask.Id,
+                ["header"] = sub(ask.Header),
+                ["question"] = sub(ask.Question),
+                ["options"] = options,
+            }),
+        };
+    }
+
     private static string Substitute(string text, ConversationView view, Match? trigger, int step)
     {
         var first = view.UserTexts.FirstOrDefault() ?? "";
@@ -285,7 +343,9 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
             .Replace("$slug", Slug(prompt), StringComparison.Ordinal)
             .Replace("$model", view.Deployment, StringComparison.Ordinal)
             .Replace("$step", step.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
-            .Replace("$cwdUrl", FileUrl(view.Cwd), StringComparison.Ordinal);
+            .Replace("$cwdUrl", FileUrl(view.Cwd), StringComparison.Ordinal)
+            .Replace("$projectRemote", view.Project?.GitRemote ?? "", StringComparison.Ordinal)
+            .Replace("$projectName", view.Project?.Label ?? "", StringComparison.Ordinal);
     }
 
     /// <summary>The working folder as a <c>file://</c> URL, which Codex's chat links open. Empty when unknown.</summary>
