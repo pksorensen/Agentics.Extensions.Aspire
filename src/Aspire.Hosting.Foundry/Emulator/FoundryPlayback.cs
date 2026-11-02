@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -42,11 +43,16 @@ internal sealed class ConversationView
         set { _projects = value; _project = null; }
     }
 
-    /// <summary>The project the conversation picked: the one whose label a reply names, longest label first.
-    /// Worked out once, since every substitution in a turn asks.</summary>
+    /// <summary>The project the conversation picked: the one whose label a reply names, longest label first,
+    /// else the one a reply gives the number of in the numbered list. Worked out once, since every
+    /// substitution in a turn asks.</summary>
     public FoundryProjectChoice? Project => (_project ??= new(Projects
         .OrderByDescending(p => p.Label.Length)
-        .FirstOrDefault(p => Replies.Any(r => r.Contains(p.Label, StringComparison.OrdinalIgnoreCase))))).Value;
+        .FirstOrDefault(p => Replies.Any(r => r.Contains(p.Label, StringComparison.OrdinalIgnoreCase)))
+        ?? Replies.Select(r => int.TryParse(r.Trim().TrimEnd('.'), NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : 0)
+            .Where(n => n >= 1 && n <= Projects.Count)
+            .Select(n => Projects[n - 1])
+            .LastOrDefault())).Value;
 
     private IReadOnlyList<FoundryProjectChoice> _projects = [];
     private StrongBox<FoundryProjectChoice?>? _project;
@@ -200,7 +206,13 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         foreach (var call in step.Calls)
         {
             var callId = $"{CallIdPrefix}s{index}_{n++}_{RandomNumberGenerator.GetHexString(8, lowercase: true)}";
-            plan.Items.Add(ResolveCall(call, view, callId, Sub));
+            var item = ResolveCall(call, view, callId, Sub);
+            // A question asked in the chat joins the step's text: every assistant message counts as a
+            // turn, so a second one would put the next request a step past the gate that reads its answer.
+            if (item is PlannedMessage asked && plan.Items.Count > 0 && plan.Items[^1] is PlannedMessage said)
+                plan.Items[^1] = said with { Text = $"{said.Text}\n\n{asked.Text}" };
+            else
+                plan.Items.Add(item);
         }
         return plan;
     }
@@ -236,7 +248,9 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         }
 
         if (call.AskProject is { } ask)
-            return new PlannedFunctionCall(NewId("fc"), callId, Find("request_user_input")?.Name ?? "request_user_input", Json(AskProject(ask, view, sub)));
+            return Find("request_user_input") is { } input
+                ? new PlannedFunctionCall(NewId("fc"), callId, input.Name, Json(AskProject(ask, view, sub)))
+                : new PlannedMessage(NewId("msg"), AskProjectInText(ask, view, sub));
 
         if (call.ApplyPatch is { Length: > 0 } patch)
             return Patch(sub(patch));
@@ -340,6 +354,17 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
                 ["options"] = options,
             }),
         };
+    }
+
+    // Codex offers request_user_input in Plan mode only, so outside it the same question is asked in the
+    // chat, numbered, and the next reply answers it with a number or a name.
+    private static string AskProjectInText(FoundryScenarioAsk ask, ConversationView view, Func<string, string> sub)
+    {
+        var text = new StringBuilder(sub(ask.Question));
+        for (var i = 0; i < view.Projects.Count; i++)
+            text.Append(CultureInfo.InvariantCulture, $"\n{i + 1}. **{view.Projects[i].Label}**");
+        text.Append(view.Projects.Count > 0 ? "\n\nSvar med nummeret eller navnet." : $"\n\n{sub(ask.OtherDescription)}");
+        return text.ToString();
     }
 
     private static string Substitute(string text, ConversationView view, Match? trigger, int step)

@@ -176,6 +176,33 @@ public sealed class EmulatorTests(EmulatorFixture fixture)
     }
 
     [Fact]
+    public async Task Ask_project_outside_plan_mode_lists_the_projects_and_takes_a_number()
+    {
+        async Task<string> Mint(string label, string remote) => (await (await _client.PostAsJsonAsync("/_emulator/keys",
+            new { customer = "sol-text-" + label.Length, userPrincipal = "typed@example.test", context = new { label, gitRemote = remote } },
+            TestContext.Current.CancellationToken)).Content.ReadFromJsonAsync<JsonNode>(TestContext.Current.CancellationToken))!["primaryKey"]!.GetValue<string>();
+        var key = await Mint("Tavle / Web", "http://git/tavle.git");
+        await Mint("Tavle 2 / Web", "http://git/tavle-2.git");
+
+        async Task<JsonArray> Send(object[] input)
+        {
+            var tools = new object[] { new { type = "function", name = "shell_command", parameters = new { type = "object" } } };
+            var response = await _client.SendAsync(Post("/openai/v1/responses", new { model = "gpt-test", stream = false, tools, prompt_cache_key = "projekt-tekst", input }, key, "Ocp-Apim-Subscription-Key"),
+                TestContext.Current.CancellationToken);
+            return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["output"]!.AsArray();
+        }
+
+        var ask = await Send([UserText("nyt projekt")]);
+        Assert.DoesNotContain(ask, o => o!["type"]!.GetValue<string>() == "function_call");
+        var text = ask.ToJsonString();
+        Assert.Contains("1. **Tavle / Web**", text);
+        Assert.Contains("2. **Tavle 2 / Web**", text);
+
+        var wired = await Send([UserText("nyt projekt"), .. ask.Select(o => JsonNode.Parse(o!.ToJsonString())!), UserText("2")]);
+        Assert.Contains("git remote add origin http://git/tavle-2.git", wired.ToJsonString());
+    }
+
+    [Fact]
     public async Task Bash_agent_keeps_the_heredoc_and_the_bash_command()
     {
         var context = EnvironmentContext("bash", "/home/demo/app");
