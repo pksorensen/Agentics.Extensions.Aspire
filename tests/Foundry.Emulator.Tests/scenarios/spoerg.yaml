@@ -1,0 +1,23 @@
+name: spoerg
+description: Test scenario that asks before it commits, and waits at a gate for a yes.
+trigger:
+  promptRegex: '(?i)^\s*spørg\s+først'
+steps:
+  - text: "Klar. Skal jeg committe?"
+    calls:
+      - function: request_user_input
+        arguments:
+          questions:
+            - id: commit
+              header: Commit
+              question: "Skal jeg committe og deploye?"
+              options:
+                - { label: "Ja, commit og deploy (Recommended)", description: "Committer og starter pipelinen." }
+                - { label: "Nej, ikke endnu", description: "Lader ændringerne ligge." }
+  - when: '(?i)\bja\b'
+    otherwise:
+      text: "Skriv ja, når jeg skal committe."
+    text: "Committer."
+    calls:
+      - shell: "git commit -m demo"
+  - text: "Committet."

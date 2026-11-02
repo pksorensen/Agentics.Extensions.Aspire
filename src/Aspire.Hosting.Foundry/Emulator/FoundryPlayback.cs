@@ -25,6 +25,10 @@ internal sealed class ConversationView
     public string? Shell { get; init; }
     public string? Cwd { get; init; }
 
+    /// <summary>The newest of the last typed message and the last tool output, for a gate's
+    /// <see cref="FoundryScenarioStep.When"/>.</summary>
+    public string? LastReply { get; init; }
+
     /// <summary>Codex on Windows runs every command in PowerShell, where a bash heredoc fails.</summary>
     public bool IsPowerShell => Shell is { } s
         && (s.Contains("powershell", StringComparison.OrdinalIgnoreCase) || s.Contains("pwsh", StringComparison.OrdinalIgnoreCase));
@@ -61,6 +65,10 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
     private static readonly Regex StepMarker = new(@"^call_sim_s(\d+)_", RegexOptions.Compiled);
     private readonly ConcurrentDictionary<string, byte> _servedErrors = new(StringComparer.Ordinal);
 
+    // How many times a session was answered by a closed gate. Each of those answers is an
+    // assistant message in the history the client re-sends, and must not count as a step.
+    private readonly ConcurrentDictionary<string, int> _gateWaits = new(StringComparer.Ordinal);
+
     public FoundryScenarioStore Scenarios => scenarios;
 
     /// <summary>Directive grammar shared with the agent gateway's Anthropic simulator:
@@ -95,7 +103,8 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
 
         if (scenario is null) return Fallback(view, chunkSize, delayMs, null);
 
-        var index = view.HistoryStep;
+        var waitKey = $"{view.SessionKey}|{scenario.Name}";
+        var index = view.HistoryStep - (_gateWaits.TryGetValue(waitKey, out var waits) ? waits : 0);
         // Skip error steps this session has already been given.
         while (index < scenario.Steps.Count && scenario.Steps[index].Error is not null &&
                _servedErrors.ContainsKey($"{view.SessionKey}|{scenario.Name}|{index}"))
@@ -116,6 +125,14 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         }
 
         var step = scenario.Steps[index];
+        if (step.When is { Length: > 0 } when && !Regex.IsMatch(view.LastReply ?? "", when))
+        {
+            _gateWaits.AddOrUpdate(waitKey, 1, (_, n) => n + 1);
+            step = step.Otherwise is { } otherwise
+                ? new FoundryScenarioStep { Text = otherwise.Text, Reasoning = otherwise.Reasoning, Usage = otherwise.Usage }
+                : new FoundryScenarioStep { Text = "Jeg venter på dit svar." };
+        }
+
         if (step.Error is { } error)
         {
             _servedErrors[$"{view.SessionKey}|{scenario.Name}|{index}"] = 0;

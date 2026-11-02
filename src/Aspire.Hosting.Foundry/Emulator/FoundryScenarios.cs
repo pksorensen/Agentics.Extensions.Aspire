@@ -54,6 +54,16 @@ public sealed class FoundryScenarioStep
     public FoundryScenarioError? Error { get; set; }
     public int? ChunkSize { get; set; }
     public int? DelayMs { get; set; }
+
+    /// <summary>A gate: the step plays only when the latest reply matches this regex. The latest
+    /// reply is whichever came last of what the person typed and what a tool answered, so one
+    /// gate takes both a click on a <c>request_user_input</c> option and a typed "ja". Anything
+    /// else plays <see cref="Otherwise"/> and the gate waits for the next reply.</summary>
+    public string? When { get; set; }
+
+    /// <summary>What a closed gate answers instead. Text and reasoning only: a waiting gate
+    /// leaves no call in the history, which is how the next request finds the gate again.</summary>
+    public FoundryScenarioStep? Otherwise { get; set; }
 }
 
 /// <summary>

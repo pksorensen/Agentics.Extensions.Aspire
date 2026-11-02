@@ -89,12 +89,12 @@ public sealed class EmulatorTests(EmulatorFixture fixture)
         content = new[] { new { type = "input_text", text = $"<environment_context>\n  <cwd>{cwd}</cwd>\n  <shell>{shell}</shell>\n</environment_context>" } },
     };
 
-    private async Task<JsonArray> Turn(object[] input)
+    private async Task<JsonArray> Turn(object[] input, string? session = null)
     {
         var tools = new object[] { new { type = "function", name = "shell_command", parameters = new { type = "object" } } };
         var response = await _client.SendAsync(Post("/line-a/openai/v1/responses", new
         {
-            model = "gpt-test-eu", stream = false, tools, prompt_cache_key = "skriv-" + input.Length, input,
+            model = "gpt-test-eu", stream = false, tools, prompt_cache_key = session ?? "skriv-" + input.Length, input,
         }), TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["output"]!.AsArray();
@@ -121,6 +121,31 @@ public sealed class EmulatorTests(EmulatorFixture fixture)
 
         var third = await Turn([context, UserText("skriv side"), .. first.Select(o => Copy(o!)), Done(write), .. second.Select(o => Copy(o!)), Done(list)]);
         Assert.Contains("file:///C:/Users/demo/my%20app/side/index.html", third.ToJsonString());
+    }
+
+    [Fact]
+    public async Task Gate_waits_for_a_yes_typed_or_clicked()
+    {
+        static object Copy(JsonNode node) => JsonNode.Parse(node.ToJsonString())!;
+        static JsonNode CallIn(JsonArray output) => output.First(o => o!["type"]!.GetValue<string>() == "function_call")!;
+        static object Output(JsonNode call, string output) => new { type = "function_call_output", call_id = call["call_id"]!.GetValue<string>(), output };
+
+        // Outside Plan mode Codex answers the question tool with an error, so the gate waits for a typed yes.
+        var ask = await Turn([UserText("spørg først")], "gate-typed");
+        Assert.Equal("request_user_input", CallIn(ask)["name"]!.GetValue<string>());
+        object[] history = [UserText("spørg først"), .. ask.Select(o => Copy(o!)), Output(CallIn(ask), "request_user_input is unavailable in Default mode")];
+        var wait = await Turn(history, "gate-typed");
+        Assert.DoesNotContain(wait, o => o!["type"]!.GetValue<string>() == "function_call");
+        Assert.Contains("Skriv ja", wait.ToJsonString());
+
+        var commit = await Turn([.. history, .. wait.Select(o => Copy(o!)), UserText("ja")], "gate-typed");
+        Assert.Contains("git commit", CallIn(commit)["arguments"]!.GetValue<string>());
+
+        // A click comes back as the tool's answer and opens the gate at once.
+        var clickAsk = await Turn([UserText("spørg først")], "gate-clicked");
+        var clicked = await Turn([UserText("spørg først"), .. clickAsk.Select(o => Copy(o!)),
+            Output(CallIn(clickAsk), "{\"answers\":{\"commit\":{\"answers\":[\"Ja, commit og deploy (Recommended)\"]}}}")], "gate-clicked");
+        Assert.Contains("git commit", CallIn(clicked)["arguments"]!.GetValue<string>());
     }
 
     [Fact]
