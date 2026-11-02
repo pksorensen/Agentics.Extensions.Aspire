@@ -36,6 +36,17 @@ internal sealed class ConversationView
     /// <see cref="FoundryScenarioCall.AskProject"/> was answered with.</summary>
     public IReadOnlyList<string> Replies { get; init; } = [];
 
+    /// <summary>The call the request's input ends on the output of, if it ends on one, so a question
+    /// that takes several model turns knows which of them comes next.</summary>
+    public string? TrailingCallId { get; init; }
+
+    /// <summary>Whether a tool search in the input found Home's project picker.</summary>
+    public bool PickerFound { get; init; }
+
+    /// <summary>Whether Codex is in Plan mode, the one mode where it runs <c>request_user_input</c>. It
+    /// offers the tool in every mode and refuses it outside Plan mode, so the offer says nothing.</summary>
+    public bool PlanMode { get; init; }
+
     /// <summary>The projects the caller may work on, their own key's first. See <see cref="FoundryProjectChoice"/>.</summary>
     public IReadOnlyList<FoundryProjectChoice> Projects
     {
@@ -62,7 +73,8 @@ internal sealed class ConversationView
         && (s.Contains("powershell", StringComparison.OrdinalIgnoreCase) || s.Contains("pwsh", StringComparison.OrdinalIgnoreCase));
 }
 
-internal sealed record AdvertisedTool(string Name, string Kind);
+/// <summary>A tool the agent offered. An MCP server's tools arrive grouped in a namespace.</summary>
+internal sealed record AdvertisedTool(string Name, string Kind, string? Description = null, string? Namespace = null);
 
 /// <summary>A project a caller holds a key for, from that key's <c>context</c>.</summary>
 public sealed record FoundryProjectChoice(string Label, string? GitRemote)
@@ -87,7 +99,8 @@ public sealed record FoundryProjectChoice(string Label, string? GitRemote)
 internal abstract record PlannedItem(string Id);
 internal sealed record PlannedReasoning(string Id, string Text) : PlannedItem(Id);
 internal sealed record PlannedMessage(string Id, string Text) : PlannedItem(Id);
-internal sealed record PlannedFunctionCall(string Id, string CallId, string Name, string Arguments) : PlannedItem(Id);
+internal sealed record PlannedFunctionCall(string Id, string CallId, string Name, string Arguments, string? Namespace = null) : PlannedItem(Id);
+internal sealed record PlannedToolSearchCall(string Id, string CallId, string Query) : PlannedItem(Id);
 internal sealed record PlannedCustomCall(string Id, string CallId, string Name, string Input) : PlannedItem(Id);
 
 internal sealed class TurnPlan
@@ -111,6 +124,10 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
 {
     internal const string CallIdPrefix = "call_sim_";
     private static readonly Regex StepMarker = new(@"^call_sim_s(\d+)_", RegexOptions.Compiled);
+
+    // A project question asked through Home's MCP app takes three model turns: search for the picker,
+    // call it, then wait for the pick. The call ids of the first two carry which one was made.
+    private static readonly Regex PickerMarker = new(@"^call_sim_s(\d+)_(find|pick)_", RegexOptions.Compiled);
     private readonly ConcurrentDictionary<string, byte> _servedErrors = new(StringComparer.Ordinal);
 
     // How many times a session was answered by a closed gate. Each of those answers is an
@@ -152,6 +169,7 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         if (scenario is null) return Fallback(view, chunkSize, delayMs, null);
 
         var waitKey = $"{view.SessionKey}|{scenario.Name}";
+        if (PickerTurn(view, scenario, waitKey, chunkSize, delayMs) is { } picker) return picker;
         var index = view.HistoryStep - (_gateWaits.TryGetValue(waitKey, out var waits) ? waits : 0);
         // Skip error steps this session has already been given.
         while (index < scenario.Steps.Count && scenario.Steps[index].Error is not null &&
@@ -217,6 +235,33 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         return plan;
     }
 
+    /// <summary>The turn after one of the picker's own calls: the call to the picker once the search
+    /// found it, then the question again under the app, where the reply answers it. That last message
+    /// is an assistant turn the history counts, so it is booked as a gate wait.</summary>
+    private TurnPlan? PickerTurn(ConversationView view, FoundryScenario scenario, string waitKey, int chunkSize, int delayMs)
+    {
+        if (view.TrailingCallId is not { } trailing || PickerMarker.Match(trailing) is not { Success: true } m) return null;
+        var index = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+        if (index >= scenario.Steps.Count || scenario.Steps[index].Calls.Select(c => c.AskProject).OfType<FoundryScenarioAsk>().FirstOrDefault() is not { } ask)
+            return null;
+
+        var plan = new TurnPlan { Scenario = scenario.Name, Step = index, ChunkSize = chunkSize, DelayMs = delayMs };
+        string Sub(string text) => Substitute(text, view, null, index);
+        if (m.Groups[2].Value == "find" && view.PickerFound)
+        {
+            plan.Items.Add(new PlannedFunctionCall(NewId("fc"), PickerCallId(index, "pick"), FoundryMcp.PickerTool, "{}", FoundryMcp.Namespace));
+            return plan;
+        }
+
+        _gateWaits.AddOrUpdate(waitKey, 1, (_, n) => n + 1);
+        var lead = m.Groups[2].Value == "pick" ? "Vælg projektet i vinduet herover, eller svar med nummeret:" : null;
+        plan.Items.Add(new PlannedMessage(NewId("msg"), AskProjectInText(ask, view, Sub, lead)));
+        return plan;
+    }
+
+    private static string PickerCallId(int step, string turn) =>
+        $"{CallIdPrefix}s{step.ToString(CultureInfo.InvariantCulture)}_{turn}_{RandomNumberGenerator.GetHexString(8, lowercase: true)}";
+
     private static TurnPlan Fallback(ConversationView view, int chunkSize, int delayMs, string? scenario)
     {
         var last = view.UserTexts.LastOrDefault();
@@ -248,9 +293,16 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         }
 
         if (call.AskProject is { } ask)
-            return Find("request_user_input") is { } input
+        {
+            var step = int.Parse(StepMarker.Match(callId).Groups[1].Value, CultureInfo.InvariantCulture);
+            if (tools.Any(t => t.Namespace == FoundryMcp.Namespace && t.Name == FoundryMcp.PickerTool))
+                return new PlannedFunctionCall(NewId("fc"), PickerCallId(step, "pick"), FoundryMcp.PickerTool, "{}", FoundryMcp.Namespace);
+            if (HasPicker(view))
+                return new PlannedToolSearchCall(NewId("ts"), PickerCallId(step, "find"), FoundryMcp.PickerTool);
+            return view.PlanMode && Find("request_user_input") is { } input
                 ? new PlannedFunctionCall(NewId("fc"), callId, input.Name, Json(AskProject(ask, view, sub)))
                 : new PlannedMessage(NewId("msg"), AskProjectInText(ask, view, sub));
+        }
 
         if (call.ApplyPatch is { Length: > 0 } patch)
             return Patch(sub(patch));
@@ -333,6 +385,12 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
 
     private static string Json(JsonNode node) => node.ToJsonString(FoundryDataPlane.Wire);
 
+    // Without a model catalogue Codex defers MCP tools behind tool_search, whose description names each
+    // connected server. With one, as Home's setup writes, they arrive as a namespace and are called directly.
+    private static bool HasPicker(ConversationView view) =>
+        view.Tools.Any(t => t.Kind == "tool_search" && t.Description is { } d &&
+            Regex.IsMatch(d, $@"^- {Regex.Escape(FoundryMcp.ServerName)}\s*$", RegexOptions.Multiline));
+
     // request_user_input wants two or three options. With one project the second is a way out, with
     // none the question still asks, so the scenario's gate can take a typed answer instead.
     private static JsonObject AskProject(FoundryScenarioAsk ask, ConversationView view, Func<string, string> sub)
@@ -357,13 +415,14 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
     }
 
     // Codex offers request_user_input in Plan mode only, so outside it the same question is asked in the
-    // chat, numbered, and the next reply answers it with a number or a name.
-    private static string AskProjectInText(FoundryScenarioAsk ask, ConversationView view, Func<string, string> sub)
+    // chat, numbered, and the next reply answers it with a number or a name. Under Home's picker the list
+    // is the way to answer when the app does not render, and leads with a pointer to it instead.
+    private static string AskProjectInText(FoundryScenarioAsk ask, ConversationView view, Func<string, string> sub, string? lead = null)
     {
-        var text = new StringBuilder(sub(ask.Question));
+        var text = new StringBuilder(lead ?? sub(ask.Question));
         for (var i = 0; i < view.Projects.Count; i++)
             text.Append(CultureInfo.InvariantCulture, $"\n{i + 1}. **{view.Projects[i].Label}**");
-        text.Append(view.Projects.Count > 0 ? "\n\nSvar med nummeret eller navnet." : $"\n\n{sub(ask.OtherDescription)}");
+        text.Append(view.Projects.Count > 0 ? lead is null ? "\n\nSvar med nummeret eller navnet." : "" : $"\n\n{sub(ask.OtherDescription)}");
         return text.ToString();
     }
 

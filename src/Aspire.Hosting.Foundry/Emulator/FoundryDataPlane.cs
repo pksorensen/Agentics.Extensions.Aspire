@@ -293,7 +293,7 @@ public sealed class FoundryResponseCache
         {
             var type = item?["type"]?.GetValue<string>();
             if (type == "message") history.Add(("assistant", null));
-            else if (type is "function_call" or "custom_tool_call") history.Add(("call", item?["call_id"]?.GetValue<string>()));
+            else if (type is "function_call" or "custom_tool_call" or "tool_search_call") history.Add(("call", item?["call_id"]?.GetValue<string>()));
         }
         _responses[id] = (response, history, view.UserTexts.ToList(), view.Replies.ToList());
         _order.Enqueue(id);
@@ -333,7 +333,8 @@ internal static class FoundryRequestReader
     {
         var history = new List<(string Kind, string? CallId)>();
         var users = new List<string>();
-        string? shell = null, cwd = null;
+        string? shell = null, cwd = null, trailing = null;
+        bool pickerFound = false, planMode = false;
         var replies = new List<string>();
         if (body["previous_response_id"]?.GetValue<string>() is { Length: > 0 } previous && cache.Chain(previous) is { } chain)
         {
@@ -351,6 +352,7 @@ internal static class FoundryRequestReader
                 foreach (var item in items.OfType<JsonObject>())
                 {
                     var type = item["type"]?.GetValue<string>() ?? "message";
+                    if (type is "message" or "function_call" or "custom_tool_call" or "local_shell_call" or "tool_search_call") trailing = null;
                     switch (type)
                     {
                         case "message":
@@ -359,12 +361,19 @@ internal static class FoundryRequestReader
                             if (role == "user") Context(text, ref shell, ref cwd);
                             if (role == "user" && IsTypedByHuman(text)) { users.Add(text); replies.Add(text); }
                             else if (role == "assistant") history.Add(("assistant", null));
+                            else if (role == "developer" && PlanModeTag.IsMatch(text)) planMode = true;
                             break;
-                        case "function_call" or "custom_tool_call" or "local_shell_call":
+                        case "function_call" or "custom_tool_call" or "local_shell_call" or "tool_search_call":
                             history.Add(("call", item["call_id"]?.GetValue<string>()));
                             break;
                         case "function_call_output" or "custom_tool_call_output":
                             replies.Add(Text(item["output"]));
+                            trailing = item["call_id"]?.GetValue<string>();
+                            break;
+                        case "tool_search_output":
+                            // What the search returned is not a reply; only whether Home's picker is in it.
+                            pickerFound |= FoundryMcp.FoundPicker(item["tools"]);
+                            trailing = item["call_id"]?.GetValue<string>();
                             break;
                     }
                 }
@@ -381,6 +390,12 @@ internal static class FoundryRequestReader
                 case "function" when name is not null: tools.Add(new(name, "function")); break;
                 case "custom" when name is not null: tools.Add(new(name, "custom")); break;
                 case "local_shell": tools.Add(new("local_shell", "local_shell")); break;
+                case "tool_search": tools.Add(new("tool_search", "tool_search", tool["description"]?.GetValue<string>())); break;
+                case "namespace" when name is not null:
+                    foreach (var inner in tool["tools"]?.AsArray().OfType<JsonObject>() ?? [])
+                        if (inner["name"]?.GetValue<string>() is { } innerName)
+                            tools.Add(new(innerName, inner["type"]?.GetValue<string>() ?? "function", null, name));
+                    break;
             }
         }
 
@@ -400,8 +415,14 @@ internal static class FoundryRequestReader
             Shell = shell,
             Cwd = cwd,
             Replies = replies,
+            TrailingCallId = trailing,
+            PickerFound = pickerFound,
+            PlanMode = planMode,
         };
     }
+
+    // Codex's Plan mode instructions, which it sends as a developer message only in that mode.
+    private static readonly Regex PlanModeTag = new(@"(?i)\bplan mode\b", RegexOptions.Compiled);
 
     private static readonly Regex ShellTag = new(@"<shell>\s*([^<]+?)\s*</shell>", RegexOptions.Compiled);
     private static readonly Regex CwdTag = new(@"<cwd>\s*([^<]+?)\s*</cwd>", RegexOptions.Compiled);
@@ -530,10 +551,15 @@ internal sealed class ResponsesWriter(TurnPlan plan, FoundryDeploymentSeed deplo
             ["id"] = r.Id, ["type"] = "reasoning",
             ["summary"] = done ? new JsonArray(new JsonObject { ["type"] = "summary_text", ["text"] = r.Text }) : new JsonArray(),
         },
-        PlannedFunctionCall f => new JsonObject
+        PlannedFunctionCall f => WithNamespace(new JsonObject
         {
             ["id"] = f.Id, ["type"] = "function_call", ["status"] = done ? "completed" : "in_progress",
             ["call_id"] = f.CallId, ["name"] = f.Name, ["arguments"] = done ? f.Arguments : "",
+        }, f.Namespace),
+        PlannedToolSearchCall t => new JsonObject
+        {
+            ["id"] = t.Id, ["type"] = "tool_search_call", ["status"] = done ? "completed" : "in_progress",
+            ["call_id"] = t.CallId, ["execution"] = "client", ["arguments"] = new JsonObject { ["query"] = t.Query },
         },
         PlannedCustomCall c => new JsonObject
         {
@@ -542,6 +568,13 @@ internal sealed class ResponsesWriter(TurnPlan plan, FoundryDeploymentSeed deplo
         },
         _ => throw new InvalidOperationException(),
     };
+
+    // A call to an MCP tool Codex found through tool_search names the tool's namespace beside it.
+    private static JsonObject WithNamespace(JsonObject call, string? ns)
+    {
+        if (ns is not null) call["namespace"] = ns;
+        return call;
+    }
 
     public JsonObject Final() => Envelope("completed", new JsonArray(plan.Items.Select(i => (JsonNode)Item(i, true)).ToArray()), true);
 

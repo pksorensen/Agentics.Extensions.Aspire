@@ -71,6 +71,7 @@ public static class FoundryEmulatorExtensions
         }));
 
         FoundryDataPlane.Map(endpoints);
+        FoundryMcp.Map(endpoints);
         endpoints.MapAzureResourceManagerEmulator();
         MapControlPlane(endpoints.MapGroup("/_emulator"));
         return endpoints;

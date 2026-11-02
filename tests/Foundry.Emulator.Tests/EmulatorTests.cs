@@ -160,6 +160,9 @@ public sealed class EmulatorTests(EmulatorFixture fixture)
         async Task<JsonArray> Send(object[] input)
         {
             var tools = new object[] { new { type = "function", name = "shell_command", parameters = new { type = "object" } }, new { type = "function", name = "request_user_input", parameters = new { type = "object" } } };
+            // request_user_input only works in Plan mode, which Codex announces in a developer message.
+            object planMode = new { type = "message", role = "developer", content = new[] { new { type = "input_text", text = "# Plan Mode (Conversational)" } } };
+            input = [planMode, .. input];
             var response = await _client.SendAsync(Post("/openai/v1/responses", new { model = "gpt-test", stream = false, tools, prompt_cache_key = "projekt", input }, key, "Ocp-Apim-Subscription-Key"),
                 TestContext.Current.CancellationToken);
             return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["output"]!.AsArray();
@@ -186,7 +189,8 @@ public sealed class EmulatorTests(EmulatorFixture fixture)
 
         async Task<JsonArray> Send(object[] input)
         {
-            var tools = new object[] { new { type = "function", name = "shell_command", parameters = new { type = "object" } } };
+            // Codex offers request_user_input in Default mode too, and refuses to run it there.
+            var tools = new object[] { new { type = "function", name = "shell_command", parameters = new { type = "object" } }, new { type = "function", name = "request_user_input", parameters = new { type = "object" } } };
             var response = await _client.SendAsync(Post("/openai/v1/responses", new { model = "gpt-test", stream = false, tools, prompt_cache_key = "projekt-tekst", input }, key, "Ocp-Apim-Subscription-Key"),
                 TestContext.Current.CancellationToken);
             return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["output"]!.AsArray();
@@ -200,6 +204,99 @@ public sealed class EmulatorTests(EmulatorFixture fixture)
 
         var wired = await Send([UserText("nyt projekt"), .. ask.Select(o => JsonNode.Parse(o!.ToJsonString())!), UserText("2")]);
         Assert.Contains("git remote add origin http://git/tavle-2.git", wired.ToJsonString());
+    }
+
+    [Fact]
+    public async Task Ask_project_through_homes_mcp_app_searches_calls_the_picker_and_takes_the_pick()
+    {
+        var minted = await (await _client.PostAsJsonAsync("/_emulator/keys",
+            new { customer = "sol-picker", userPrincipal = "picker@example.test", context = new { label = "Tavle 3 / Web", gitRemote = "http://git/tavle-3.git" } },
+            TestContext.Current.CancellationToken)).Content.ReadFromJsonAsync<JsonNode>(TestContext.Current.CancellationToken);
+        var key = minted!["primaryKey"]!.GetValue<string>();
+
+        async Task<JsonArray> Send(object[] input)
+        {
+            var tools = new object[]
+            {
+                new { type = "function", name = "shell_command", parameters = new { type = "object" } },
+                new { type = "tool_search", execution = "client", description = "# Tool discovery\n\nYou have access to tools from the following sources:\n- home\n", parameters = new { type = "object" } },
+            };
+            var response = await _client.SendAsync(Post("/openai/v1/responses", new { model = "gpt-test", stream = false, tools, prompt_cache_key = "projekt-app", input }, key, "Ocp-Apim-Subscription-Key"),
+                TestContext.Current.CancellationToken);
+            return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["output"]!.AsArray();
+        }
+        static IEnumerable<JsonNode> Echo(JsonArray output) => output.Select(o => JsonNode.Parse(o!.ToJsonString())!);
+
+        var search = await Send([UserText("nyt projekt")]);
+        var searchCall = search.Single(o => o!["type"]!.GetValue<string>() == "tool_search_call")!;
+        var searchId = searchCall["call_id"]!.GetValue<string>();
+        Assert.StartsWith("call_sim_s0_find_", searchId);
+
+        var found = JsonNode.Parse($$"""
+            {"type":"tool_search_output","call_id":"{{searchId}}","execution":"client","status":"completed",
+             "tools":[{"type":"namespace","name":"mcp__home","tools":[{"type":"function","name":"choose_project"}]}]}
+            """)!;
+        var call = await Send([UserText("nyt projekt"), .. Echo(search), found]);
+        var picker = call.Single()!;
+        Assert.Equal("function_call", picker["type"]!.GetValue<string>());
+        Assert.Equal("mcp__home", picker["namespace"]!.GetValue<string>());
+        Assert.Equal("choose_project", picker["name"]!.GetValue<string>());
+
+        var output = JsonNode.Parse($$"""{"type":"function_call_output","call_id":"{{picker["call_id"]!.GetValue<string>()}}","output":"{\"projects\":[]}"}""")!;
+        var wait = await Send([UserText("nyt projekt"), .. Echo(search), found, .. Echo(call), output]);
+        var question = wait.Single()!["content"]![0]!["text"]!.GetValue<string>();
+        Assert.StartsWith("Vælg projektet i vinduet herover", question);
+        Assert.Contains("1. **Tavle 3 / Web**", question);
+
+        var wired = await Send([UserText("nyt projekt"), .. Echo(search), found, .. Echo(call), output, .. Echo(wait), UserText("Tavle 3 / Web")]);
+        Assert.Contains("git remote add origin http://git/tavle-3.git", wired.ToJsonString());
+
+        async Task<JsonNode> Mcp(object message)
+        {
+            var response = await _client.SendAsync(Post("/mcp", message, key, "api-key"), TestContext.Current.CancellationToken);
+            return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["result"]!;
+        }
+        var listed = await Mcp(new { jsonrpc = "2.0", id = 1, method = "tools/list" });
+        Assert.Equal("ui://home/choose-project.html", listed["tools"]![0]!["_meta"]!["ui"]!["resourceUri"]!.GetValue<string>());
+        var result = await Mcp(new { jsonrpc = "2.0", id = 2, method = "tools/call", @params = new { name = "choose_project", arguments = new { } } });
+        Assert.Equal("Tavle 3 / Web", result["structuredContent"]!["projects"]![0]!["label"]!.GetValue<string>());
+        var page = await Mcp(new { jsonrpc = "2.0", id = 3, method = "resources/read", @params = new { uri = "ui://home/choose-project.html" } });
+        Assert.Equal("text/html;profile=mcp-app", page["contents"]![0]!["mimeType"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Ask_project_calls_homes_picker_directly_when_codex_lists_it_in_a_namespace()
+    {
+        var minted = await (await _client.PostAsJsonAsync("/_emulator/keys",
+            new { customer = "sol-picker-ns", userPrincipal = "picker-ns@example.test", context = new { label = "Tavle 4 / Web", gitRemote = "http://git/tavle-4.git" } },
+            TestContext.Current.CancellationToken)).Content.ReadFromJsonAsync<JsonNode>(TestContext.Current.CancellationToken);
+        var key = minted!["primaryKey"]!.GetValue<string>();
+
+        async Task<JsonArray> Send(object[] input)
+        {
+            var tools = new object[]
+            {
+                new { type = "function", name = "shell_command", parameters = new { type = "object" } },
+                new { type = "function", name = "request_user_input", parameters = new { type = "object" } },
+                new { type = "namespace", name = "mcp__home", tools = new[] { new { type = "function", name = "choose_project" } } },
+            };
+            var response = await _client.SendAsync(Post("/openai/v1/responses", new { model = "gpt-test", stream = false, tools, prompt_cache_key = "projekt-ns", input }, key, "Ocp-Apim-Subscription-Key"),
+                TestContext.Current.CancellationToken);
+            return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["output"]!.AsArray();
+        }
+        static IEnumerable<JsonNode> Echo(JsonArray output) => output.Select(o => JsonNode.Parse(o!.ToJsonString())!);
+
+        var call = await Send([UserText("nyt projekt")]);
+        var picker = call.Single(o => o!["type"]!.GetValue<string>() == "function_call")!;
+        Assert.Equal("mcp__home", picker["namespace"]!.GetValue<string>());
+        Assert.Equal("choose_project", picker["name"]!.GetValue<string>());
+
+        var output = JsonNode.Parse($$"""{"type":"function_call_output","call_id":"{{picker["call_id"]!.GetValue<string>()}}","output":"{}"}""")!;
+        var wait = await Send([UserText("nyt projekt"), .. Echo(call), output]);
+        Assert.Contains("1. **Tavle 4 / Web**", wait.Single()!["content"]![0]!["text"]!.GetValue<string>());
+
+        var wired = await Send([UserText("nyt projekt"), .. Echo(call), output, .. Echo(wait), UserText("1")]);
+        Assert.Contains("git remote add origin http://git/tavle-4.git", wired.ToJsonString());
     }
 
     [Fact]
