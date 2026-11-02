@@ -42,7 +42,8 @@ public sealed class FoundryScenarioStep
 {
     /// <summary>Assistant text for this turn. Substitutions: <c>$lastUserText</c>,
     /// <c>$firstUserText</c>, <c>$prompt</c> (the trigger's capture group 1, else the
-    /// first user text), <c>$model</c>, <c>$step</c>.</summary>
+    /// first user text), <c>$model</c>, <c>$step</c>, <c>$cwdUrl</c> (the agent's working
+    /// folder as a <c>file://</c> URL, empty when the request does not say).</summary>
     public string? Text { get; set; }
 
     /// <summary>A reasoning summary, streamed as a <c>reasoning</c> item.</summary>
@@ -67,8 +68,12 @@ public sealed class FoundryScenarioCall
     /// or <c>local_shell</c>, whichever is advertised.</summary>
     public string? Shell { get; set; }
 
+    /// <summary>The same command for an agent whose shell is PowerShell (Codex on Windows), used
+    /// instead of <see cref="Shell"/> there. Without it the <see cref="Shell"/> line is sent as is.</summary>
+    public string? PowerShell { get; set; }
+
     /// <summary>Write a file. Becomes an <c>apply_patch</c> Add File when that tool is
-    /// advertised, otherwise a shell heredoc.</summary>
+    /// advertised, otherwise a shell heredoc, or a here-string when the agent's shell is PowerShell.</summary>
     public FoundryScenarioFile? WriteFile { get; set; }
 
     /// <summary>A raw <c>*** Begin Patch</c> body for <c>apply_patch</c>.</summary>

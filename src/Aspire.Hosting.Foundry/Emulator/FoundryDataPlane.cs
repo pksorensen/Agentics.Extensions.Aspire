@@ -3,9 +3,11 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
 
 namespace Aspire.Hosting.Foundry.Emulator;
 
@@ -141,6 +143,11 @@ internal static class FoundryDataPlane
         var view = api == Api.Responses
             ? FoundryRequestReader.ReadResponses(body, deployment, bytes.LongLength, cache, request)
             : FoundryRequestReader.ReadChat(body, deployment, bytes.LongLength, request);
+
+        // What a scenario can call: the tool names and shell the agent advertised, one line per turn.
+        (services.GetService(typeof(ILoggerFactory)) as ILoggerFactory)?.CreateLogger("Foundry.Emulator.Playback")
+            .LogInformation("Turn on {Deployment}: shell {Shell}, cwd {Cwd}, tools {Tools}",
+                deployment, view.Shell ?? "(none)", view.Cwd ?? "(none)", string.Join(", ", view.Tools.Select(t => $"{t.Name}:{t.Kind}")));
 
         var directive = caller.SimDirective
             ?? Header(request, "x-foundry-sim") ?? Header(request, "x-gateway-sim");
@@ -325,6 +332,7 @@ internal static class FoundryRequestReader
     {
         var history = new List<(string Kind, string? CallId)>();
         var users = new List<string>();
+        string? shell = null, cwd = null;
         if (body["previous_response_id"]?.GetValue<string>() is { Length: > 0 } previous && cache.Chain(previous) is { } chain)
         {
             history.AddRange(chain.History);
@@ -345,6 +353,7 @@ internal static class FoundryRequestReader
                         case "message":
                             var role = item["role"]?.GetValue<string>();
                             var text = Text(item["content"]);
+                            if (role == "user") Context(text, ref shell, ref cwd);
                             if (role == "user" && IsTypedByHuman(text)) users.Add(text);
                             else if (role == "assistant") history.Add(("assistant", null));
                             break;
@@ -382,7 +391,20 @@ internal static class FoundryRequestReader
             HistoryStep = FoundryPlayback.HistoryStepFrom(history),
             SessionKey = FoundryPlayback.SessionKeyFrom(explicitSession, users),
             RequestBytes = bytes,
+            Shell = shell,
+            Cwd = cwd,
         };
+    }
+
+    private static readonly Regex ShellTag = new(@"<shell>\s*([^<]+?)\s*</shell>", RegexOptions.Compiled);
+    private static readonly Regex CwdTag = new(@"<cwd>\s*([^<]+?)\s*</cwd>", RegexOptions.Compiled);
+
+    /// <summary>Codex states its shell and working folder in an <c>&lt;environment_context&gt;</c> message.
+    /// The last one in the conversation wins, as Codex re-sends it when either changes.</summary>
+    private static void Context(string text, ref string? shell, ref string? cwd)
+    {
+        if (ShellTag.Match(text) is { Success: true } s) shell = s.Groups[1].Value;
+        if (CwdTag.Match(text) is { Success: true } c) cwd = c.Groups[1].Value;
     }
 
     public static ConversationView ReadChat(JsonObject body, string deployment, long bytes, HttpRequest request)

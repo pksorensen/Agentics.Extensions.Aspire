@@ -1,0 +1,16 @@
+name: skriv
+description: Test scenario that writes a file, lists it and links to it.
+trigger:
+  promptRegex: '(?i)^\s*skriv\s+side'
+steps:
+  - text: "Jeg skriver siden."
+    calls:
+      - writeFile:
+          path: "side/index.html"
+          content: |
+            <h1>Hej, 'verden' & co</h1>
+  - text: "Tjekker."
+    calls:
+      - shell: "ls -la side"
+        powerShell: "Get-ChildItem side"
+  - text: "Åbn [siden]($cwdUrl/side/index.html)."

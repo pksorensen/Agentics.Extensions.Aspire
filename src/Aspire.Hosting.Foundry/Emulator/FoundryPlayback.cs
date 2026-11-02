@@ -19,6 +19,15 @@ internal sealed class ConversationView
     public required int HistoryStep { get; init; }
     public required string SessionKey { get; init; }
     public required long RequestBytes { get; init; }
+
+    /// <summary>The agent's shell and working folder, from Codex's <c>&lt;environment_context&gt;</c>.
+    /// Null when the request carries none.</summary>
+    public string? Shell { get; init; }
+    public string? Cwd { get; init; }
+
+    /// <summary>Codex on Windows runs every command in PowerShell, where a bash heredoc fails.</summary>
+    public bool IsPowerShell => Shell is { } s
+        && (s.Contains("powershell", StringComparison.OrdinalIgnoreCase) || s.Contains("pwsh", StringComparison.OrdinalIgnoreCase));
 }
 
 internal sealed record AdvertisedTool(string Name, string Kind);
@@ -132,7 +141,7 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         foreach (var call in step.Calls)
         {
             var callId = $"{CallIdPrefix}s{index}_{n++}_{RandomNumberGenerator.GetHexString(8, lowercase: true)}";
-            plan.Items.Add(ResolveCall(call, view.Tools, callId, Sub));
+            plan.Items.Add(ResolveCall(call, view, callId, Sub));
         }
         return plan;
     }
@@ -148,8 +157,9 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         return plan;
     }
 
-    private static PlannedItem ResolveCall(FoundryScenarioCall call, IReadOnlyList<AdvertisedTool> tools, string callId, Func<string, string> sub)
+    private static PlannedItem ResolveCall(FoundryScenarioCall call, ConversationView view, string callId, Func<string, string> sub)
     {
+        var tools = view.Tools;
         AdvertisedTool? Find(params string[] names) =>
             names.Select(n => tools.FirstOrDefault(t => t.Name.Equals(n, StringComparison.OrdinalIgnoreCase)))
                  .FirstOrDefault(t => t is not null);
@@ -182,6 +192,7 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
                 body.Append("*** End Patch\n");
                 return Patch(body.ToString());
             }
+            if (view.IsPowerShell) return Shell(PowerShellWrite(path, content));
             var dir = Path.GetDirectoryName(path.Replace('\\', '/'));
             var marker = "FOUNDRY_EMULATOR_EOF";
             var script = (string.IsNullOrEmpty(dir) ? "" : $"mkdir -p '{dir}' && ") +
@@ -189,6 +200,8 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
             return Shell(script);
         }
 
+        if (view.IsPowerShell && call.PowerShell is { Length: > 0 } ps)
+            return Shell(sub(ps));
         if (call.Shell is { Length: > 0 } command)
             return Shell(sub(command));
 
@@ -211,11 +224,35 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
                 return new PlannedFunctionCall(NewId("fc"), callId, shell.Name,
                     shell.Name == "shell_command"
                         ? Json(new JsonObject { ["command"] = command })
-                        : Json(new JsonObject { ["command"] = new JsonArray("bash", "-lc", command) }));
+                        : Json(new JsonObject { ["command"] = Argv(command) }));
             if (Find("local_shell") is { } local)
-                return new PlannedFunctionCall(NewId("fc"), callId, local.Name, Json(new JsonObject { ["command"] = new JsonArray("bash", "-lc", command) }));
+                return new PlannedFunctionCall(NewId("fc"), callId, local.Name, Json(new JsonObject { ["command"] = Argv(command) }));
             return new PlannedFunctionCall(NewId("fc"), callId, "exec_command", Json(new JsonObject { ["cmd"] = command }));
         }
+
+        JsonArray Argv(string command) => view.IsPowerShell
+            ? new JsonArray("powershell.exe", "-NoProfile", "-Command", command)
+            : new JsonArray("bash", "-lc", command);
+    }
+
+    /// <summary>
+    /// A file write PowerShell runs. The content goes in a literal here-string, so it reads like the
+    /// file in the agent's transcript; a line that would close the here-string early falls back to
+    /// base64. WriteAllText writes UTF-8 without a BOM, which Set-Content in Windows PowerShell does not.
+    /// </summary>
+    internal static string PowerShellWrite(string path, string content)
+    {
+        static string Quote(string s) => "'" + s.Replace("'", "''") + "'";
+        var normalized = content.Replace("\r\n", "\n").TrimEnd('\n') + "\n";
+        var dir = Path.GetDirectoryName(path.Replace('\\', '/'));
+        var mkdir = string.IsNullOrEmpty(dir) ? "" : $"New-Item -ItemType Directory -Force -Path {Quote(dir)} | Out-Null\n";
+        var target = $"(Join-Path (Get-Location) {Quote(path)})";
+        if (normalized.Split('\n').Any(l => l.StartsWith("'@", StringComparison.Ordinal)))
+        {
+            var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(normalized));
+            return mkdir + $"[System.IO.File]::WriteAllBytes({target}, [Convert]::FromBase64String('{b64}'))";
+        }
+        return mkdir + $"[System.IO.File]::WriteAllText({target}, @'\n{normalized}'@)";
     }
 
     private static string Json(JsonNode node) => node.ToJsonString(FoundryDataPlane.Wire);
@@ -230,7 +267,17 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
             .Replace("$prompt", prompt, StringComparison.Ordinal)
             .Replace("$slug", Slug(prompt), StringComparison.Ordinal)
             .Replace("$model", view.Deployment, StringComparison.Ordinal)
-            .Replace("$step", step.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+            .Replace("$step", step.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
+            .Replace("$cwdUrl", FileUrl(view.Cwd), StringComparison.Ordinal);
+    }
+
+    /// <summary>The working folder as a <c>file://</c> URL, which Codex's chat links open. Empty when unknown.</summary>
+    internal static string FileUrl(string? cwd)
+    {
+        if (string.IsNullOrWhiteSpace(cwd)) return "";
+        var path = cwd.Trim().Replace('\\', '/').TrimEnd('/');
+        var encoded = string.Join('/', path.Split('/').Select(Uri.EscapeDataString)).Replace("%3A", ":", StringComparison.Ordinal);
+        return path.StartsWith('/') ? "file://" + encoded : "file:///" + encoded;
     }
 
     internal static string Slug(string text)

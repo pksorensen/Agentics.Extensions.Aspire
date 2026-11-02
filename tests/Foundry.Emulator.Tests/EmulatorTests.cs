@@ -83,6 +83,55 @@ public sealed class EmulatorTests(EmulatorFixture fixture)
         }));
     }
 
+    private static object EnvironmentContext(string shell, string cwd) => new
+    {
+        type = "message", role = "user",
+        content = new[] { new { type = "input_text", text = $"<environment_context>\n  <cwd>{cwd}</cwd>\n  <shell>{shell}</shell>\n</environment_context>" } },
+    };
+
+    private async Task<JsonArray> Turn(object[] input)
+    {
+        var tools = new object[] { new { type = "function", name = "shell_command", parameters = new { type = "object" } } };
+        var response = await _client.SendAsync(Post("/line-a/openai/v1/responses", new
+        {
+            model = "gpt-test-eu", stream = false, tools, prompt_cache_key = "skriv-" + input.Length, input,
+        }), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["output"]!.AsArray();
+    }
+
+    private static object UserText(string text) => new { type = "message", role = "user", content = new[] { new { type = "input_text", text } } };
+
+    [Fact]
+    public async Task Powershell_agent_gets_files_written_in_powershell_and_a_file_link()
+    {
+        var context = EnvironmentContext("powershell", @"C:\Users\demo\my app");
+        var first = await Turn([context, UserText("skriv side")]);
+        var write = first.First(o => o!["type"]!.GetValue<string>() == "function_call")!;
+        var command = JsonNode.Parse(write["arguments"]!.GetValue<string>())!["command"]!.GetValue<string>();
+        Assert.Contains("New-Item -ItemType Directory -Force -Path 'side'", command);
+        Assert.Contains("[System.IO.File]::WriteAllText((Join-Path (Get-Location) 'side/index.html'), @'\n<h1>Hej, 'verden' & co</h1>\n'@)", command);
+        Assert.DoesNotContain("<<", command);
+
+        object Done(JsonNode call) => new { type = "function_call_output", call_id = call["call_id"]!.GetValue<string>(), output = "ok" };
+        object Copy(JsonNode node) => JsonNode.Parse(node.ToJsonString())!;
+        var second = await Turn([context, UserText("skriv side"), .. first.Select(o => Copy(o!)), Done(write)]);
+        var list = second.First(o => o!["type"]!.GetValue<string>() == "function_call")!;
+        Assert.Equal("Get-ChildItem side", JsonNode.Parse(list["arguments"]!.GetValue<string>())!["command"]!.GetValue<string>());
+
+        var third = await Turn([context, UserText("skriv side"), .. first.Select(o => Copy(o!)), Done(write), .. second.Select(o => Copy(o!)), Done(list)]);
+        Assert.Contains("file:///C:/Users/demo/my%20app/side/index.html", third.ToJsonString());
+    }
+
+    [Fact]
+    public async Task Bash_agent_keeps_the_heredoc_and_the_bash_command()
+    {
+        var context = EnvironmentContext("bash", "/home/demo/app");
+        var first = await Turn([context, UserText("skriv side")]);
+        var command = JsonNode.Parse(first.First(o => o!["type"]!.GetValue<string>() == "function_call")!["arguments"]!.GetValue<string>())!["command"]!.GetValue<string>();
+        Assert.StartsWith("mkdir -p 'side' && cat > 'side/index.html' <<'FOUNDRY_EMULATOR_EOF'", command);
+    }
+
     [Fact]
     public async Task Dated_chat_requires_api_version()
     {
