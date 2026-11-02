@@ -281,7 +281,7 @@ internal static class TokenMeter
 public sealed class FoundryResponseCache
 {
     private const int Capacity = 512;
-    private readonly ConcurrentDictionary<string, (JsonObject Response, List<(string Kind, string? CallId)> History, List<string> UserTexts)> _responses = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, (JsonObject Response, List<(string Kind, string? CallId)> History, List<string> UserTexts, List<string> Replies)> _responses = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<string> _order = new();
     private readonly ConcurrentDictionary<string, long> _lastInput = new(StringComparer.Ordinal);
 
@@ -295,7 +295,7 @@ public sealed class FoundryResponseCache
             if (type == "message") history.Add(("assistant", null));
             else if (type is "function_call" or "custom_tool_call") history.Add(("call", item?["call_id"]?.GetValue<string>()));
         }
-        _responses[id] = (response, history, view.UserTexts.ToList());
+        _responses[id] = (response, history, view.UserTexts.ToList(), view.Replies.ToList());
         _order.Enqueue(id);
         while (_order.Count > Capacity && _order.TryDequeue(out var old)) _responses.TryRemove(old, out _);
     }
@@ -307,8 +307,8 @@ public sealed class FoundryResponseCache
         return false;
     }
 
-    internal (List<(string Kind, string? CallId)> History, List<string> UserTexts)? Chain(string id) =>
-        _responses.TryGetValue(id, out var e) ? (e.History, e.UserTexts) : null;
+    internal (List<(string Kind, string? CallId)> History, List<string> UserTexts, List<string> Replies)? Chain(string id) =>
+        _responses.TryGetValue(id, out var e) ? (e.History, e.UserTexts, e.Replies) : null;
 
     internal long PreviousInput(string session, long current)
     {
@@ -333,18 +333,19 @@ internal static class FoundryRequestReader
     {
         var history = new List<(string Kind, string? CallId)>();
         var users = new List<string>();
-        string? shell = null, cwd = null, lastReply = null;
+        string? shell = null, cwd = null;
         var replies = new List<string>();
         if (body["previous_response_id"]?.GetValue<string>() is { Length: > 0 } previous && cache.Chain(previous) is { } chain)
         {
             history.AddRange(chain.History);
             users.AddRange(chain.UserTexts);
+            replies.AddRange(chain.Replies);
         }
 
         switch (body["input"])
         {
             case JsonValue v when v.TryGetValue<string>(out var s):
-                if (IsTypedByHuman(s)) { users.Add(s); lastReply = s; replies.Add(s); }
+                if (IsTypedByHuman(s)) { users.Add(s); replies.Add(s); }
                 break;
             case JsonArray items:
                 foreach (var item in items.OfType<JsonObject>())
@@ -356,15 +357,14 @@ internal static class FoundryRequestReader
                             var role = item["role"]?.GetValue<string>();
                             var text = Text(item["content"]);
                             if (role == "user") Context(text, ref shell, ref cwd);
-                            if (role == "user" && IsTypedByHuman(text)) { users.Add(text); lastReply = text; replies.Add(text); }
+                            if (role == "user" && IsTypedByHuman(text)) { users.Add(text); replies.Add(text); }
                             else if (role == "assistant") history.Add(("assistant", null));
                             break;
                         case "function_call" or "custom_tool_call" or "local_shell_call":
                             history.Add(("call", item["call_id"]?.GetValue<string>()));
                             break;
                         case "function_call_output" or "custom_tool_call_output":
-                            lastReply = Text(item["output"]);
-                            replies.Add(lastReply);
+                            replies.Add(Text(item["output"]));
                             break;
                     }
                 }
@@ -399,7 +399,6 @@ internal static class FoundryRequestReader
             RequestBytes = bytes,
             Shell = shell,
             Cwd = cwd,
-            LastReply = lastReply,
             Replies = replies,
         };
     }
@@ -419,7 +418,6 @@ internal static class FoundryRequestReader
     {
         var history = new List<(string Kind, string? CallId)>();
         var users = new List<string>();
-        string? lastReply = null;
         var replies = new List<string>();
         foreach (var message in body["messages"]?.AsArray().OfType<JsonObject>() ?? [])
         {
@@ -427,12 +425,11 @@ internal static class FoundryRequestReader
             if (role == "user")
             {
                 var text = Text(message["content"]);
-                if (IsTypedByHuman(text)) { users.Add(text); lastReply = text; replies.Add(text); }
+                if (IsTypedByHuman(text)) { users.Add(text); replies.Add(text); }
             }
             else if (role == "tool")
             {
-                lastReply = Text(message["content"]);
-                replies.Add(lastReply);
+                replies.Add(Text(message["content"]));
             }
             else if (role == "assistant")
             {
@@ -459,7 +456,6 @@ internal static class FoundryRequestReader
             HistoryStep = FoundryPlayback.HistoryStepFrom(history),
             SessionKey = FoundryPlayback.SessionKeyFrom(explicitSession, users),
             RequestBytes = bytes,
-            LastReply = lastReply,
             Replies = replies,
         };
     }

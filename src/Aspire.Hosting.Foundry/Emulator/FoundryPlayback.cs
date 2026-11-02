@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -27,19 +28,28 @@ internal sealed class ConversationView
 
     /// <summary>The newest of the last typed message and the last tool output, for a gate's
     /// <see cref="FoundryScenarioStep.When"/>.</summary>
-    public string? LastReply { get; init; }
+    public string? LastReply => Replies.Count > 0 ? Replies[^1] : null;
 
-    /// <summary>Every typed message and tool output, oldest first, for finding which project an
-    /// earlier <see cref="FoundryScenarioCall.AskProject"/> was answered with.</summary>
+    /// <summary>Every typed message and tool output, oldest first, including those of the responses
+    /// a <c>previous_response_id</c> chains on, for finding which project an earlier
+    /// <see cref="FoundryScenarioCall.AskProject"/> was answered with.</summary>
     public IReadOnlyList<string> Replies { get; init; } = [];
 
     /// <summary>The projects the caller may work on, their own key's first. See <see cref="FoundryProjectChoice"/>.</summary>
-    public IReadOnlyList<FoundryProjectChoice> Projects { get; set; } = [];
+    public IReadOnlyList<FoundryProjectChoice> Projects
+    {
+        get => _projects;
+        set { _projects = value; _project = null; }
+    }
 
-    /// <summary>The project the conversation picked: the one whose label a reply names, longest label first.</summary>
-    public FoundryProjectChoice? Project => Projects
+    /// <summary>The project the conversation picked: the one whose label a reply names, longest label first.
+    /// Worked out once, since every substitution in a turn asks.</summary>
+    public FoundryProjectChoice? Project => (_project ??= new(Projects
         .OrderByDescending(p => p.Label.Length)
-        .FirstOrDefault(p => Replies.Any(r => r.Contains(p.Label, StringComparison.OrdinalIgnoreCase)));
+        .FirstOrDefault(p => Replies.Any(r => r.Contains(p.Label, StringComparison.OrdinalIgnoreCase))))).Value;
+
+    private IReadOnlyList<FoundryProjectChoice> _projects = [];
+    private StrongBox<FoundryProjectChoice?>? _project;
 
     /// <summary>Codex on Windows runs every command in PowerShell, where a bash heredoc fails.</summary>
     public bool IsPowerShell => Shell is { } s
