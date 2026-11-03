@@ -44,7 +44,7 @@ internal static class FoundryMcp
             t["name"]?.GetValue<string>() == Namespace &&
             t["tools"] is JsonArray inner && inner.OfType<JsonObject>().Any(f => f["name"]?.GetValue<string>() == PickerTool));
 
-    private static async Task<IResult> Handle(HttpContext context, FoundryState state, FoundryAuthenticator auth, IConfiguration configuration, ILoggerFactory loggers)
+    private static async Task<IResult> Handle(HttpContext context, FoundryState state, FoundryAuthenticator auth, IConfiguration configuration, IHttpClientFactory httpClients, ILoggerFactory loggers)
     {
         JsonObject? message;
         try
@@ -74,7 +74,7 @@ internal static class FoundryMcp
         {
             var wanted = message["params"]?["arguments"]?["project"]?.GetValue<string>();
             return Result(id, await FoundryMcpPipeline.ResultAsync(
-                FoundryProjectChoice.For(state, caller), wanted, configuration["FOUNDRY_DATA_DIR"], AppMeta(FoundryMcpPipeline.Uri), context.RequestAborted));
+                FoundryProjectChoice.For(state, caller), wanted, configuration["FOUNDRY_DATA_DIR"], httpClients.CreateClient(FoundryMcpPipeline.HomeClient), AppMeta(FoundryMcpPipeline.Uri), context.RequestAborted));
         }
 
         return method switch

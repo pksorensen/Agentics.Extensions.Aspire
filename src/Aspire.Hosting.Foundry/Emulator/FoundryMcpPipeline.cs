@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -10,12 +11,14 @@ namespace Aspire.Hosting.Foundry.Emulator;
 /// The emulator holds only the project's push credential, so it reads the commits the way any clone
 /// would, with a fetch into a bare copy of its own. DEMO runs the newest commit on main and
 /// shows as deploying for <see cref="DeployTime"/> after it was committed, the rule Home's pipeline
-/// uses. PROD is IT's to approve in Home, so the card only says it waits for them.
+/// uses. PROD is IT's to approve in Home: the key's <c>pipelineUrl</c> says which commit IT approved,
+/// when and by whom, and the address IT gave it, and PROD then deploys for as long as DEMO did.
 /// </summary>
 internal static class FoundryMcpPipeline
 {
     public const string Tool = "show_pipeline";
     public const string Uri = "ui://home/pipeline.html";
+    public const string HomeClient = "foundry-home";
 
     /// <summary>Home's <c>ProjectPipelines.DeployTime</c>.</summary>
     private static readonly TimeSpan DeployTime = TimeSpan.FromSeconds(20);
@@ -41,7 +44,7 @@ internal static class FoundryMcpPipeline
         ["_meta"] = meta,
     };
 
-    public static async Task<JsonObject> ResultAsync(IReadOnlyList<FoundryProjectChoice> projects, string? wanted, string? dataDirectory, JsonObject meta, CancellationToken ct)
+    public static async Task<JsonObject> ResultAsync(IReadOnlyList<FoundryProjectChoice> projects, string? wanted, string? dataDirectory, HttpClient home, JsonObject meta, CancellationToken ct)
     {
         var project = projects.FirstOrDefault(p => string.Equals(p.Label, wanted, StringComparison.OrdinalIgnoreCase))
             ?? projects.FirstOrDefault(p => p.GitRemote is { Length: > 0 });
@@ -74,10 +77,11 @@ internal static class FoundryMcpPipeline
                     ["commit"] = head?.ToJson(),
                     ["liveAt"] = head is null ? null : (head.At + DeployTime).ToString("O"),
                 };
-                data["prod"] = new JsonObject { ["state"] = head is null ? "empty" : "waiting" };
+                var release = await ReadProdAsync(home, project.PipelineUrl, ct);
+                data["prod"] = release?.ToJson(head) ?? new JsonObject { ["state"] = head is null ? "empty" : "waiting" };
                 text = head is null
                     ? $"Nothing is pushed to {project.Label} yet."
-                    : $"{project.Label}: DEMO {(live ? "runs" : "is deploying")} {head.Short} \"{head.Message}\". PROD waits for IT to approve it in Home. The card shows the person the pipeline and keeps itself up to date, so there is no need to describe it.";
+                    : $"{project.Label}: DEMO {(live ? "runs" : "is deploying")} {head.Short} \"{head.Message}\". {release?.Describe(head, now) ?? "PROD waits for IT to approve it in Home."} The card shows the person the pipeline and keeps itself up to date, so there is no need to repeat it beyond a short answer.";
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException && !ct.IsCancellationRequested)
             {
@@ -92,6 +96,57 @@ internal static class FoundryMcpPipeline
             ["structuredContent"] = data,
             ["_meta"] = meta,
         };
+    }
+
+    // What Home approved for PROD. When Home cannot be asked, the card says PROD waits, as before.
+    private sealed record Release(string Commit, string Message, string ApprovedBy, DateTimeOffset ApprovedOn, string? Domain)
+    {
+        private string Short => Commit.Length > 7 ? Commit[..7] : Commit;
+        private string? Url => Domain is { Length: > 0 } d ? $"https://{d}/" : null;
+        private DateTimeOffset LiveAt => ApprovedOn + DeployTime;
+
+        public JsonObject ToJson(Commit? head) => new()
+        {
+            ["state"] = "approved",
+            ["commit"] = new JsonObject { ["hash"] = Commit, ["short"] = Short, ["message"] = Message },
+            ["approvedBy"] = ApprovedBy,
+            ["approvedAt"] = ApprovedOn.ToString("O"),
+            ["liveAt"] = LiveAt.ToString("O"),
+            ["url"] = Url,
+            ["newer"] = head is not null && !string.Equals(head.Hash, Commit, StringComparison.OrdinalIgnoreCase),
+        };
+
+        public string Describe(Commit head, DateTimeOffset now)
+        {
+            var at = Url is { } u ? $" at {u}" : "";
+            var where = now >= LiveAt
+                ? $"PROD runs {Short} \"{Message}\"{at}, approved by {ApprovedBy}."
+                : $"{ApprovedBy} approved {Short} \"{Message}\" for PROD, and it is deploying{at}.";
+            return string.Equals(head.Hash, Commit, StringComparison.OrdinalIgnoreCase)
+                ? where
+                : $"{where} The newer {head.Short} waits for IT to approve it.";
+        }
+    }
+
+    private static async Task<Release?> ReadProdAsync(HttpClient home, string? pipelineUrl, CancellationToken ct)
+    {
+        if (pipelineUrl is not { Length: > 0 }) return null;
+        try
+        {
+            var status = await home.GetFromJsonAsync<JsonObject>(pipelineUrl, ct);
+            return status?["prod"] is JsonObject prod
+                ? new Release(
+                    prod["commit"]!.GetValue<string>(),
+                    prod["message"]?.GetValue<string>() ?? "",
+                    prod["approvedBy"]?.GetValue<string>() ?? "IT",
+                    prod["approvedOn"]!.GetValue<DateTimeOffset>(),
+                    status["domain"]?.GetValue<string>())
+                : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or InvalidOperationException or OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
     private sealed record Commit(string Hash, string Message, string Author, DateTimeOffset At)
@@ -215,6 +270,9 @@ internal static class FoundryMcpPipeline
   .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .9s linear; }
   @keyframes pulse { 50% { opacity: .35; } }
   @media (prefers-reduced-motion: reduce) { .deploying .dot { animation: none; } .bar i { transition: none; } }
+  .stage a.open { all: unset; cursor: pointer; display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 600;
+    color: var(--ok); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+  .stage a.open:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; border-radius: 2px; }
   .commits { display: grid; gap: 4px; }
   .commit { display: flex; gap: 10px; align-items: baseline; font-size: 13px; min-width: 0; }
   .commit code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--accent); flex: none; }
@@ -276,18 +334,50 @@ internal static class FoundryMcpPipeline
 
   function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
 
-  function stage(env, cls, state, note, progress) {
+  function stage(env, cls, state, note, progress, extra) {
     const s = el('div', 'stage ' + cls);
     s.appendChild(el('div', 'env', env));
     const st = el('div', 'state'); st.appendChild(el('span', 'dot')); st.appendChild(document.createTextNode(state)); s.appendChild(st);
     if (note) s.appendChild(el('div', 'note', note));
     if (progress !== undefined) { const b = el('div', 'bar'); const i = el('i'); i.style.width = Math.round(progress * 100) + '%'; b.appendChild(i); s.appendChild(b); }
+    if (extra) s.appendChild(extra);
     return s;
   }
 
-  function demoState() {
-    if (!data || !data.demo || data.demo.state === 'empty') return 'empty';
-    return serverNow() >= Date.parse(data.demo.liveAt) ? 'live' : 'deploying';
+  // Deploying until the server's clock passes liveAt, so the card moves on its own between fetches.
+  function stateOf(env) {
+    if (!env || !env.liveAt) return env && env.state === 'waiting' ? 'waiting' : 'empty';
+    return serverNow() >= Date.parse(env.liveAt) ? 'live' : 'deploying';
+  }
+  const demoState = () => stateOf(data && data.demo);
+  const prodState = () => stateOf(data && data.prod);
+  const secondsTo = (iso) => Math.max(0, Math.ceil((Date.parse(iso) - serverNow()) / 1000));
+
+  // The page sits in a sandbox, so the host opens the link: MCP Apps first, then the Apps SDK, then the page itself.
+  function openLink(url) {
+    request('ui/open-link', { url }).catch((e) => {
+      trace('ui/open-link failed', e);
+      if (window.openai && window.openai.openExternal) window.openai.openExternal({ href: url });
+      else window.open(url, '_blank', 'noopener');
+    });
+  }
+
+  function link(url) {
+    const a = el('a', 'open', 'Åbn ' + url.replace(/^https?:\/\//, '').replace(/\/$/, '') + ' ↗');
+    a.href = url; a.target = '_blank'; a.rel = 'noopener';
+    a.addEventListener('click', (e) => { e.preventDefault(); openLink(url); });
+    return a;
+  }
+
+  function prodStage() {
+    const p = data.prod, state = prodState();
+    if (state !== 'live' && state !== 'deploying') return stage('PROD', 'waiting', 'Venter på IT', 'IT godkender den i Home');
+    const newer = p.newer ? ' · nyere ændring venter på IT' : '';
+    if (state === 'deploying') {
+      const left = secondsTo(p.liveAt);
+      return stage('PROD', 'deploying', 'Udrulles…', 'Godkendt af ' + p.approvedBy + ' · klar om ca. ' + left + ' sek.', 1 - left / (data.deploySeconds || 20));
+    }
+    return stage('PROD', 'live', 'Kører', p.commit.short + ' · godkendt af ' + p.approvedBy + newer, undefined, p.url ? link(p.url) : null);
   }
 
   function render() {
@@ -303,12 +393,11 @@ internal static class FoundryMcpPipeline
     if (demo === 'live') {
       stages.appendChild(stage('DEMO', 'live', 'Kører', head.short + ' er udrullet'));
     } else {
-      const left = Math.max(0, Math.ceil((Date.parse(data.demo.liveAt) - serverNow()) / 1000));
-      const total = data.deploySeconds || 20;
-      stages.appendChild(stage('DEMO', 'deploying', 'Udrulles…', 'Klar om ca. ' + left + ' sek.', 1 - left / total));
+      const left = secondsTo(data.demo.liveAt);
+      stages.appendChild(stage('DEMO', 'deploying', 'Udrulles…', 'Klar om ca. ' + left + ' sek.', 1 - left / (data.deploySeconds || 20)));
     }
     stages.appendChild(el('div', 'arrow', '→'));
-    stages.appendChild(stage('PROD', 'waiting', 'Venter på IT', 'IT godkender den i Home'));
+    stages.appendChild(prodStage());
     body.appendChild(stages);
 
     const list = el('div', 'commits');
@@ -357,7 +446,9 @@ internal static class FoundryMcpPipeline
   function schedule() {
     clearTimeout(timer);
     if (!canCall) return;
-    timer = setTimeout(refresh, demoState() === 'deploying' ? 3000 : 30000);
+    // Waiting for IT is when a person is most likely watching, so that is asked about often too.
+    const busy = demoState() === 'deploying' || prodState() !== 'live';
+    timer = setTimeout(refresh, busy ? 3000 : 30000);
   }
 
   // The deploy counts down on its own between fetches, so the card moves even when the host lets it fetch nothing.

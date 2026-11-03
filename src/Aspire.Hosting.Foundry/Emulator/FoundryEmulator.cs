@@ -33,6 +33,7 @@ public static class FoundryEmulatorExtensions
         seed = seed with { Behaviour = behaviour };
 
         services.AddHttpClient("foundry-tokeninfo", c => c.Timeout = TimeSpan.FromSeconds(10));
+        services.AddHttpClient(FoundryMcpPipeline.HomeClient, c => c.Timeout = TimeSpan.FromSeconds(5));
         services.AddSingleton(seed);
         services.AddSingleton(sp => new FoundryState(seed, sp.GetRequiredService<IConfiguration>()));
         services.AddSingleton(sp =>

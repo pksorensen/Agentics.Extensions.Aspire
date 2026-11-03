@@ -86,8 +86,9 @@ internal sealed class ConversationView
 /// <summary>A tool the agent offered. An MCP server's tools arrive grouped in a namespace.</summary>
 internal sealed record AdvertisedTool(string Name, string Kind, string? Description = null, string? Namespace = null);
 
-/// <summary>A project a caller holds a key for, from that key's <c>context</c>.</summary>
-public sealed record FoundryProjectChoice(string Label, string? GitRemote)
+/// <summary>A project a caller holds a key for, from that key's <c>context</c>: its name, the remote it
+/// pushes to, and where Home says what its PROD runs.</summary>
+public sealed record FoundryProjectChoice(string Label, string? GitRemote, string? PipelineUrl = null)
 {
     /// <summary>The caller's projects: every key with a <c>label</c> held by the same person, their
     /// own key first, then by name. Three at most, which is what <c>request_user_input</c> takes.</summary>
@@ -96,7 +97,7 @@ public sealed record FoundryProjectChoice(string Label, string? GitRemote)
         if (string.IsNullOrEmpty(caller.UserPrincipal)) return [];
         static FoundryProjectChoice? Of(FoundryApiKeySeed k) =>
             k.Context?.TryGetValue("label", out var label) == true && label.Length > 0
-                ? new FoundryProjectChoice(label, k.Context.TryGetValue("gitRemote", out var remote) ? remote : null)
+                ? new FoundryProjectChoice(label, k.Context.GetValueOrDefault("gitRemote"), k.Context.GetValueOrDefault("pipelineUrl"))
                 : null;
         var keys = state.GatewayKeys.Values
             .Where(k => string.Equals(k.UserPrincipal, caller.UserPrincipal, StringComparison.OrdinalIgnoreCase))
