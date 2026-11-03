@@ -127,7 +127,8 @@ next request from the same session gets the step after it. `onExhausted` is
 Built-ins: `echo`, `shell-then-stop`, `rate-limit-then-succeed`. Scenarios can also be
 uploaded at runtime: `PUT /_emulator/scenarios/{name}` with a JSON or YAML body.
 
-Set `FOUNDRY_REQUEST_LOG_DIR` on the container to keep every request body — the quickest
+Set `FOUNDRY_REQUEST_LOG_DIR` on the container to keep every request body, named by time,
+conversation and the step that answered it (the newest 2000 are kept). It is the quickest
 way to see exactly which tools and history an agent sends before writing a scenario.
 
 ## Codex

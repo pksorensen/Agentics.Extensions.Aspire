@@ -130,15 +130,6 @@ internal static class FoundryDataPlane
             return Error(404, "DeploymentNotFound",
                 $"The API deployment '{deployment}' for this resource does not exist. If you created the deployment within the last 5 minutes, please wait a moment and try again.");
 
-        // Scenario authoring aid: FOUNDRY_REQUEST_LOG_DIR keeps every request body, so
-        // the exact tools and history an agent sends can be read instead of guessed.
-        if (Environment.GetEnvironmentVariable("FOUNDRY_REQUEST_LOG_DIR") is { Length: > 0 } logDir)
-        {
-            Directory.CreateDirectory(logDir);
-            await File.WriteAllBytesAsync(Path.Combine(logDir,
-                $"{DateTimeOffset.UtcNow:yyyyMMddTHHmmssfff}-{(api == Api.Responses ? "responses" : "chat")}.json"), bytes, context.RequestAborted);
-        }
-
         var stream = body["stream"]?.GetValueKind() == JsonValueKind.True;
         var view = api == Api.Responses
             ? FoundryRequestReader.ReadResponses(body, deployment, bytes.LongLength, cache, request)
@@ -149,6 +140,12 @@ internal static class FoundryDataPlane
             ?? Header(request, "x-foundry-sim") ?? Header(request, "x-gateway-sim");
         var plan = playback.Plan(view, directive, dep.Scenario,
             Math.Max(1, state.Behaviour.DefaultChunkSize), Math.Max(0, state.Behaviour.DefaultDelayMs));
+
+        // Scenario authoring aid: FOUNDRY_REQUEST_LOG_DIR keeps every request body, so the exact tools
+        // and history an agent sent can be read instead of guessed. The name says which conversation
+        // and which step answered it; the newest files are kept.
+        if (Environment.GetEnvironmentVariable("FOUNDRY_REQUEST_LOG_DIR") is { Length: > 0 } logDir)
+            await KeepRequest(logDir, bytes, $"{(api == Api.Responses ? "responses" : "chat")}-{SessionTag(view.SessionKey)}-{plan.Scenario ?? "none"}-s{plan.Step}", context.RequestAborted);
 
         // What a scenario can call, what the agent sent and which step answered it, one line per turn,
         // so a run can be read back without keeping the bodies.
@@ -226,6 +223,21 @@ internal static class FoundryDataPlane
             return Results.Empty;
         }
     }
+
+    private const int KeptRequests = 2000;
+
+    private static async Task KeepRequest(string dir, byte[] body, string name, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(dir);
+        await File.WriteAllBytesAsync(Path.Combine(dir, $"{DateTimeOffset.UtcNow:yyyyMMddTHHmmssfff}-{name}.json"), body, cancellationToken);
+        var files = Directory.GetFiles(dir, "*.json");
+        if (files.Length <= KeptRequests) return;
+        Array.Sort(files, StringComparer.Ordinal);
+        foreach (var old in files.AsSpan(0, files.Length - KeptRequests)) File.Delete(old);
+    }
+
+    private static string SessionTag(string sessionKey) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sessionKey)))[..8].ToLowerInvariant();
 
     private static string? Header(HttpRequest request, string name) =>
         request.Headers.TryGetValue(name, out var v) && !string.IsNullOrWhiteSpace(v.ToString()) ? v.ToString() : null;

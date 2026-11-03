@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
 
 namespace Aspire.Hosting.Foundry.Emulator;
 
@@ -42,7 +43,7 @@ internal static class FoundryMcp
             t["name"]?.GetValue<string>() == Namespace &&
             t["tools"] is JsonArray inner && inner.OfType<JsonObject>().Any(f => f["name"]?.GetValue<string>() == PickerTool));
 
-    private static async Task<IResult> Handle(HttpContext context, FoundryState state, FoundryAuthenticator auth)
+    private static async Task<IResult> Handle(HttpContext context, FoundryState state, FoundryAuthenticator auth, ILoggerFactory loggers)
     {
         JsonObject? message;
         try
@@ -57,6 +58,8 @@ internal static class FoundryMcp
 
         var id = message["id"]?.DeepClone();
         var method = message["method"]?.GetValue<string>() ?? "";
+        loggers.CreateLogger("Foundry.Emulator.Mcp").LogInformation("MCP {Method} {Name}",
+            method, message["params"]?["name"]?.GetValue<string>() ?? message["params"]?["uri"]?.GetValue<string>() ?? "");
         // A notification gets no answer.
         if (id is null) return Results.Accepted();
 
