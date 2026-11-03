@@ -239,7 +239,7 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         foreach (var call in step.Calls)
         {
             var callId = $"{CallIdPrefix}s{index}_{n++}_{RandomNumberGenerator.GetHexString(8, lowercase: true)}";
-            var item = ResolveCall(call, view, callId, Sub);
+            if (ResolveCall(call, view, callId, Sub) is not { } item) continue;
             // A question asked in the chat joins the step's text: every assistant message counts as a
             // turn, so a second one would put the next request a step past the gate that reads its answer.
             if (item is PlannedMessage asked && plan.Items.Count > 0 && plan.Items[^1] is PlannedMessage said)
@@ -288,7 +288,7 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         return plan;
     }
 
-    private static PlannedItem ResolveCall(FoundryScenarioCall call, ConversationView view, string callId, Func<string, string> sub)
+    private static PlannedItem? ResolveCall(FoundryScenarioCall call, ConversationView view, string callId, Func<string, string> sub)
     {
         var tools = view.Tools;
         AdvertisedTool? Find(params string[] names) =>
@@ -305,6 +305,13 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
             return tool?.Kind == "custom"
                 ? new PlannedCustomCall(NewId("ctc"), callId, name, call.Arguments is JsonValue v && v.TryGetValue<string>(out var s) ? sub(s) : args)
                 : new PlannedFunctionCall(NewId("fc"), callId, name, args);
+        }
+
+        if (call.HomeTool is { Length: > 0 } home)
+        {
+            if (!tools.Any(t => t.Namespace == FoundryMcp.Namespace && t.Name == home)) return null;
+            var args = call.Arguments is null ? "{}" : sub(call.Arguments.ToJsonString(FoundryDataPlane.Wire));
+            return new PlannedFunctionCall(NewId("fc"), callId, home, args, FoundryMcp.Namespace);
         }
 
         if (call.AskProject is { } ask)

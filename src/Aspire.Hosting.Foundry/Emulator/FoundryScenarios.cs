@@ -95,6 +95,10 @@ public sealed class FoundryScenarioCall
     /// <summary>A raw <c>*** Begin Patch</c> body for <c>apply_patch</c>.</summary>
     public string? ApplyPatch { get; set; }
 
+    /// <summary>One of Home's MCP tools, by name, with <see cref="Arguments"/>. Left out when the agent
+    /// does not offer Home's tools, so a script still plays without them.</summary>
+    public string? HomeTool { get; set; }
+
     /// <summary>Escape hatch: call a named function with literal arguments. The name
     /// may be <c>$toolMatching:&lt;substring&gt;</c>.</summary>
     public string? Function { get; set; }
