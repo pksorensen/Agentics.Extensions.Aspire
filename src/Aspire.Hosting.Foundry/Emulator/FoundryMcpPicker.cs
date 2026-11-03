@@ -181,6 +181,8 @@ internal static class FoundryMcpPicker
   request('ui/initialize', {
     protocolVersion: '2026-01-26',
     appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
+    // appInfo is the current name; Codex Desktop 26.1027 rejects a request without it. clientInfo is the older one.
+    appInfo: { name: 'home-project-picker', version: '1.0.0' },
     clientInfo: { name: 'home-project-picker', version: '1.0.0' },
   }).then((result) => {
     applyTheme(result && result.hostContext);
