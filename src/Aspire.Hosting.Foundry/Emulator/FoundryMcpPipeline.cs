@@ -417,9 +417,13 @@ internal static class FoundryMcpPipeline
     foot.textContent = 'Opdateret ' + at + (canCall ? ' · opdaterer sig selv' : ' · tryk Opdater for at hente igen');
   }
 
-  function apply(result) {
+  // Codex hands the first result over again whenever its globals change, a resize included, so an
+  // answer older than the one shown is dropped rather than turning the card back.
+  function apply(result, source) {
     const d = result && (result.structuredContent || (result._meta && result._meta['home/pipeline']));
-    if (!d) return;
+    if (!d) { trace('no data from ' + source, { keys: result && Object.keys(result) }); return; }
+    if (data && data.now && d.now && Date.parse(d.now) < Date.parse(data.now)) return;
+    if (!data || (data.prod && data.prod.state) !== (d.prod && d.prod.state)) trace('prod from ' + source, d.prod && d.prod.state);
     data = d;
     if (d.now) offset = Date.parse(d.now) - Date.now();
     fetchedAt = new Date();
@@ -430,7 +434,7 @@ internal static class FoundryMcpPipeline
   async function refresh() {
     refreshButton.setAttribute('aria-busy', 'true');
     try {
-      apply(await request('tools/call', { name: 'show_pipeline', arguments: data && data.project ? { project: data.project } : {} }));
+      apply(await request('tools/call', { name: 'show_pipeline', arguments: data && data.project ? { project: data.project } : {} }), 'tools/call');
       if (!canCall) trace('tools/call ok again');
       canCall = true;
     } catch (e) {
@@ -471,7 +475,7 @@ internal static class FoundryMcpPipeline
       return;
     }
     if (m.method === 'ui/notifications/tool-result') {
-      apply(m.params);
+      apply(m.params, 'tool-result');
     } else if (m.method === 'ui/notifications/host-context-changed') {
       applyTheme(m.params);
     } else if (m.method === 'ui/resource-teardown' && m.id !== undefined) {
@@ -485,7 +489,7 @@ internal static class FoundryMcpPipeline
     const o = window.openai;
     if (!o) return;
     if (o.theme) document.documentElement.dataset.theme = o.theme;
-    if (o.toolOutput) apply({ structuredContent: o.toolOutput });
+    if (o.toolOutput) apply({ structuredContent: o.toolOutput }, 'openai');
   }
   window.addEventListener('openai:set_globals', fromOpenAi);
   fromOpenAi();
