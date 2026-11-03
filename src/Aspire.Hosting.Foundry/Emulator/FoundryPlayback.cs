@@ -17,8 +17,18 @@ internal sealed class ConversationView
     public required IReadOnlyList<AdvertisedTool> Tools { get; init; }
     public required IReadOnlyList<string> UserTexts { get; init; }
 
+    /// <summary>The agent's turns so far, oldest first: assistant messages and tool calls.</summary>
+    public required IReadOnlyList<(string Kind, string? CallId)> History { get; init; }
+
+    /// <summary>For each of <see cref="UserTexts"/>, how many <see cref="History"/> entries came before it.</summary>
+    public required IReadOnlyList<int> UserAt { get; init; }
+
     /// <summary>The step the history says comes next — see <see cref="FoundryScenario"/>.</summary>
-    public required int HistoryStep { get; init; }
+    public int HistoryStep => FoundryPlayback.HistoryStepFrom(History);
+
+    /// <summary>The step the history says comes next, counting from a typed message: the one that
+    /// started the scenario, when an earlier one in the thread matched none.</summary>
+    public int StepSince(int user) => user == 0 ? HistoryStep : FoundryPlayback.HistoryStepFrom(History.Skip(UserAt[user]));
     public required string SessionKey { get; init; }
     public required long RequestBytes { get; init; }
 
@@ -155,12 +165,17 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         }
 
         var firstUser = view.UserTexts.FirstOrDefault() ?? "";
-        if (scenario is null && scenarios.MatchTrigger(firstUser, view.Deployment) is { } hit)
+        // The scenario starts at the first typed message that triggers one, so a thread whose opening
+        // message misses (a typo) still picks it up when a later one names it.
+        var startUser = 0;
+        for (var i = 0; scenario is null && i < view.UserTexts.Count; i++)
         {
+            if (scenarios.MatchTrigger(view.UserTexts[i], view.Deployment) is not { } hit) continue;
             scenario = hit.Scenario;
             trigger = hit.Match;
+            startUser = i;
         }
-        else if (scenario?.Trigger?.PromptRegex is { Length: > 0 } pattern)
+        if (trigger is null && scenario?.Trigger?.PromptRegex is { Length: > 0 } pattern)
         {
             var m = Regex.Match(firstUser, pattern);
             if (m.Success) trigger = m;
@@ -170,7 +185,7 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
 
         var waitKey = $"{view.SessionKey}|{scenario.Name}";
         if (PickerTurn(view, scenario, waitKey, chunkSize, delayMs) is { } picker) return picker;
-        var index = view.HistoryStep - (_gateWaits.TryGetValue(waitKey, out var waits) ? waits : 0);
+        var index = view.StepSince(startUser) - (_gateWaits.TryGetValue(waitKey, out var waits) ? waits : 0);
         // Skip error steps this session has already been given.
         while (index < scenario.Steps.Count && scenario.Steps[index].Error is not null &&
                _servedErrors.ContainsKey($"{view.SessionKey}|{scenario.Name}|{index}"))

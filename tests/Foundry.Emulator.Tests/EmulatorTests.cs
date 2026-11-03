@@ -300,6 +300,40 @@ public sealed class EmulatorTests(EmulatorFixture fixture)
     }
 
     [Fact]
+    public async Task A_later_message_starts_the_scenario_when_the_first_one_matched_none()
+    {
+        var minted = await (await _client.PostAsJsonAsync("/_emulator/keys",
+            new { customer = "sol-picker-typo", userPrincipal = "picker-typo@example.test", context = new { label = "Tavle 5 / Web", gitRemote = "http://git/tavle-5.git" } },
+            TestContext.Current.CancellationToken)).Content.ReadFromJsonAsync<JsonNode>(TestContext.Current.CancellationToken);
+        var key = minted!["primaryKey"]!.GetValue<string>();
+
+        async Task<JsonArray> Send(object[] input)
+        {
+            var tools = new object[]
+            {
+                new { type = "function", name = "shell_command", parameters = new { type = "object" } },
+                new { type = "namespace", name = "mcp__home", tools = new[] { new { type = "function", name = "choose_project" } } },
+            };
+            var response = await _client.SendAsync(Post("/openai/v1/responses", new { model = "gpt-test", stream = false, tools, prompt_cache_key = "projekt-typo", input }, key, "Ocp-Apim-Subscription-Key"),
+                TestContext.Current.CancellationToken);
+            return JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!["output"]!.AsArray();
+        }
+        static IEnumerable<JsonNode> Echo(JsonArray output) => output.Select(o => JsonNode.Parse(o!.ToJsonString())!);
+
+        var missed = await Send([UserText("nyt prjekt")]);
+        Assert.Contains("No scenario matched", missed.ToJsonString());
+
+        var call = await Send([UserText("nyt prjekt"), .. Echo(missed), UserText("nyt projekt")]);
+        var picker = call.Single(o => o!["type"]!.GetValue<string>() == "function_call")!;
+        Assert.Equal("choose_project", picker["name"]!.GetValue<string>());
+
+        var output = JsonNode.Parse($$"""{"type":"function_call_output","call_id":"{{picker["call_id"]!.GetValue<string>()}}","output":"{}"}""")!;
+        var wait = await Send([UserText("nyt prjekt"), .. Echo(missed), UserText("nyt projekt"), .. Echo(call), output]);
+        var wired = await Send([UserText("nyt prjekt"), .. Echo(missed), UserText("nyt projekt"), .. Echo(call), output, .. Echo(wait), UserText("1")]);
+        Assert.Contains("git remote add origin http://git/tavle-5.git", wired.ToJsonString());
+    }
+
+    [Fact]
     public async Task Bash_agent_keeps_the_heredoc_and_the_bash_command()
     {
         var context = EnvironmentContext("bash", "/home/demo/app");
