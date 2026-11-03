@@ -74,7 +74,11 @@ internal static class FoundryMcpPicker
   let nextId = 1, picked = false;
   const pending = new Map();
 
-  function post(message) { window.parent.postMessage(message, '*'); }
+  // Codex Desktop copies the page's console warnings into its own log, which is the only place a failed handshake shows.
+  function trace(what, detail) { console.warn('[home-project-picker] ' + what + (detail === undefined ? '' : ' ' + JSON.stringify(detail))); }
+  trace('script started', { openai: !!window.openai, framed: window.parent !== window });
+
+  function post(message) { trace('send', { id: message.id, method: message.method }); window.parent.postMessage(message, '*'); }
   function request(method, params) {
     const id = nextId++;
     post({ jsonrpc: '2.0', id, method, params });
@@ -145,6 +149,7 @@ internal static class FoundryMcpPicker
 
   window.addEventListener('message', (event) => {
     const m = event.data;
+    trace('received', m && { id: m.id, method: m.method, error: m.error, hasResult: m.result !== undefined });
     if (!m || m.jsonrpc !== '2.0') return;
     if (m.id !== undefined && pending.has(m.id) && !m.method) {
       const { resolve, reject } = pending.get(m.id);
@@ -181,7 +186,7 @@ internal static class FoundryMcpPicker
     applyTheme(result && result.hostContext);
     notify('ui/notifications/initialized', {});
     resize();
-  }, (error) => console.error('[home-project-picker] ui/initialize failed', JSON.stringify(error)));
+  }, (error) => trace('ui/initialize failed', error));
 })();
 </script>
 </body>
