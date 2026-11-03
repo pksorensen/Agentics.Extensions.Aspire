@@ -145,15 +145,17 @@ internal static class FoundryDataPlane
             : FoundryRequestReader.ReadChat(body, deployment, bytes.LongLength, request);
         view.Projects = FoundryProjectChoice.For(state, caller);
 
-        // What a scenario can call: the tool names and shell the agent advertised, one line per turn.
-        (services.GetService(typeof(ILoggerFactory)) as ILoggerFactory)?.CreateLogger("Foundry.Emulator.Playback")
-            .LogInformation("Turn on {Deployment}: shell {Shell}, cwd {Cwd}, tools {Tools}",
-                deployment, view.Shell ?? "(none)", view.Cwd ?? "(none)", string.Join(", ", view.Tools.Select(t => $"{t.Name}:{t.Kind}")));
-
         var directive = caller.SimDirective
             ?? Header(request, "x-foundry-sim") ?? Header(request, "x-gateway-sim");
         var plan = playback.Plan(view, directive, dep.Scenario,
             Math.Max(1, state.Behaviour.DefaultChunkSize), Math.Max(0, state.Behaviour.DefaultDelayMs));
+
+        // What a scenario can call, what the agent sent and which step answered it, one line per turn,
+        // so a run can be read back without keeping the bodies.
+        (services.GetService(typeof(ILoggerFactory)) as ILoggerFactory)?.CreateLogger("Foundry.Emulator.Playback")
+            .LogInformation("Turn on {Deployment}: {Scenario} step {Step}, history {History}, shell {Shell}, cwd {Cwd}, tools {Tools}",
+                deployment, plan.Scenario ?? "(none)", plan.Step, FoundryPlayback.Describe(view), view.Shell ?? "(none)", view.Cwd ?? "(none)",
+                string.Join(", ", view.Tools.Select(t => t.Namespace is null ? $"{t.Name}:{t.Kind}" : $"{t.Namespace}/{t.Name}:{t.Kind}")));
 
         var project = Header(request, "x-foundry-project") ?? Header(request, "x-project-id")
             ?? Meta(body, "project") ?? Meta(body, "project_id")

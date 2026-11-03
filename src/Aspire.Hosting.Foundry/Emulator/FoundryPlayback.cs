@@ -493,6 +493,23 @@ public sealed class FoundryPlayback(FoundryScenarioStore scenarios)
         return index;
     }
 
+    /// <summary>The history in short: <c>u</c> a typed message, <c>a</c> an assistant message, <c>c3</c> a call
+    /// this emulator made in step 3 and <c>c?</c> one it did not make.</summary>
+    internal static string Describe(ConversationView view)
+    {
+        var parts = new List<string>();
+        for (var i = 0; i <= view.History.Count; i++)
+        {
+            parts.AddRange(view.UserAt.Where(at => at == i).Select(_ => "u"));
+            if (i == view.History.Count) break;
+            var (kind, callId) = view.History[i];
+            parts.Add(kind == "assistant" ? "a"
+                : callId is not null && StepMarker.Match(callId) is { Success: true } m ? "c" + m.Groups[1].Value
+                : "c?");
+        }
+        return parts.Count == 0 ? "(empty)" : string.Join(' ', parts);
+    }
+
     internal static string SessionKeyFrom(string? explicitKey, IEnumerable<string> userTexts)
     {
         if (!string.IsNullOrWhiteSpace(explicitKey)) return explicitKey;
