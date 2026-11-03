@@ -175,13 +175,13 @@ internal static class FoundryMcpPicker
 
   request('ui/initialize', {
     protocolVersion: '2026-01-26',
-    appCapabilities: { availableDisplayModes: ['inline'] },
+    appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
     clientInfo: { name: 'home-project-picker', version: '1.0.0' },
   }).then((result) => {
     applyTheme(result && result.hostContext);
     notify('ui/notifications/initialized', {});
     resize();
-  }, () => {});
+  }, (error) => console.error('[home-project-picker] ui/initialize failed', JSON.stringify(error)));
 })();
 </script>
 </body>
