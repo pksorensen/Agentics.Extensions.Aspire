@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.7](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.6...v0.2.7) (2026-11-15)
+
+
+### Features
+
+* bridge local Azure user access ([29112e9](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/29112e9b786fce646ddd4354d3fdd6dfdc9a0c00))
+* improve Next.js development diagnostics ([cc7b30d](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/cc7b30d2dd5931d2a9ee4bc3c5012322c8519539))
+* **teams-bot:** Teams notification bot with the app package as a deploy artifact ([a54868f](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/a54868fa6c4e1245e15e287d8c8bd455da46c6d4))
+
 ## [0.2.6](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.5...v0.2.6) (2026-09-03)
 
 
