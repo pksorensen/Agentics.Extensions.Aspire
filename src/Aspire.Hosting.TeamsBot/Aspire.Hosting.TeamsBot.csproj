@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared metadata (TFM, versioning, packaging) lives in ../Directory.Build.props. -->
+  <PropertyGroup>
+    <PackageId>Agentics.Extensions.Aspire.TeamsBot</PackageId>
+    <Description>Aspire hosting integration for a notification bot in Microsoft Teams: provisions an Azure Bot with the Teams channel on an app's managed identity, and writes the Teams app package (manifest + icons) as a deploy artifact.</Description>
+    <PackageTags>$(PackageTags);teams;microsoft-teams;azure-bot;bot-service</PackageTags>
+    <!-- The pipeline-step and output-directory APIs are marked experimental. -->
+    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES002;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIREAZURE001;ASPIREAZURE002;ASPIREAZURE003</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Azure" Version="13.4.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="teams-bot.bicep" LogicalName="Aspire.Hosting.TeamsBot.teams-bot.bicep" />
+  </ItemGroup>
+
+</Project>

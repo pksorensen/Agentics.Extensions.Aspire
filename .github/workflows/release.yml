@@ -4,14 +4,13 @@ name: Release
 # release PR merges, all Agentics.Extensions.Aspire.* packages are packed and pushed
 # to nuget.org via NuGet.org Trusted Publishing (OIDC) — no long-lived NUGET_API_KEY.
 #
-# One-time setup on nuget.org (Account → Trusted Publishing), for EACH package ID
-# (Agentics.Extensions.Aspire.Terminal / .QrCode / .Testing.Videos / .Testkit / .NextJs /
-# .MicrosoftTenant / .MicrosoftGraph / .AzureResourceManager / .FordConnect / .MitID /
-# .Declare / .Registry / .Stripe / .UserData):
+# One-time setup on nuget.org (Account → Trusted Publishing): ONE policy, package
+# owner Agentics, glob `*`, covers every package here, including new ones:
 #   Publisher:        GitHub Actions
 #   Repository Owner: pksorensen
 #   Repository:       Agentics.Extensions.Aspire
 #   Workflow File:    release.yml
+# A new package needs no new policy. Its first push creates it under Agentics.
 # The nuget.org username is passed to NuGet/login as plain text (an identifier, not a
 # credential) — see the `user:` input below.
 
@@ -88,6 +87,7 @@ jobs:
             src/Aspire.Hosting.AzureResourceManager/Aspire.Hosting.AzureResourceManager.csproj \
             src/Aspire.Hosting.FordConnect/Aspire.Hosting.FordConnect.csproj \
             src/Aspire.Hosting.Registry/Aspire.Hosting.Registry.csproj \
+            src/Aspire.Hosting.TeamsBot/Aspire.Hosting.TeamsBot.csproj \
             src/Aspire.Hosting.Stripe/Aspire.Hosting.Stripe.csproj \
             src/Aspire.Hosting.UserData/Aspire.Hosting.UserData.csproj \
             src/Aspire.Hosting.MitID/Aspire.Hosting.MitID.csproj \
