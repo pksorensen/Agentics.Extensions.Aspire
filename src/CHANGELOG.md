@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.9](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.8...v0.2.9) (2026-11-16)
+
+
+### Features
+
+* **teams-bot:** command menu from teams-app.json commands ([c3db47a](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/c3db47a58d91b6d4c75bcf1effaaf8ff48c18bdf))
+
 ## [0.2.8](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.7...v0.2.8) (2026-11-16)
 
 
