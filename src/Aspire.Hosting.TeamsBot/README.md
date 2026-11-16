@@ -42,6 +42,25 @@ The file sits beside its two icons. Its paths are relative to the file itself.
 - `name.short` is the sender's name in every chat. Teams caps it at 30
   characters.
 
+## Conversational bots
+
+By default the bot is notification-only: Teams shows no compose box. To let
+people write to it, set `"conversational": true` in `teams-app.json`, bump
+`version`, and give the bot an endpoint for the activities Teams posts:
+
+```csharp
+var bot = builder.AddTeamsBot("teams-bot", "teams/teams-app.json", environment)
+    .WithIdentity(webIdentity)
+    .WithMessagingEndpoint("https://web.example.net/api/teams/messages");
+```
+
+A conversational bot without an endpoint fails `aspire deploy` in the package
+step. The endpoint is a plain URL, not a reference to the web resource: the web
+app already consumes the bot's outputs, and the reverse reference would be a
+cycle. The receiving app must verify the Bot Connector's JWT itself (issuer
+`https://api.botframework.com`, audience = bot app id, `serviceUrl` claim, key
+endorsement for the channel).
+
 ## Environments
 
 Any `environment` other than empty or `prod` gets these suffixes:

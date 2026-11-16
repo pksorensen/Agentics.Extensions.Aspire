@@ -33,6 +33,9 @@ public sealed class TeamsBotResource : AzureBicepResource
     /// <summary>The tenant the bot belongs to.</summary>
     public BicepOutputReference TenantId => new("tenantId", this);
 
+    /// <summary>The URL Teams posts activities to, when set with <c>WithMessagingEndpoint</c>.</summary>
+    public string? MessagingEndpoint { get; internal set; }
+
     /// <summary>Name of the pipeline step that writes the Teams app package.</summary>
     public string PackageStepName => $"teams-package-{Name}";
 }
@@ -103,6 +106,28 @@ public static class TeamsBotExtensions
     }
 
     /// <summary>
+    /// Sets the HTTPS endpoint Teams posts the bot's activities to: messages people
+    /// write to it, installs. Required when <c>teams-app.json</c> says
+    /// <c>"conversational": true</c>; without it the deploy fails rather than ship
+    /// a bot that shows a compose box and never answers.
+    /// </summary>
+    /// <param name="builder">The bot.</param>
+    /// <param name="endpointUrl">Absolute <c>https://</c> URL, e.g. <c>https://web.example/api/teams/messages</c>.</param>
+    public static IResourceBuilder<TeamsBotResource> WithMessagingEndpoint(
+        this IResourceBuilder<TeamsBotResource> builder,
+        string endpointUrl)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        if (!Uri.TryCreate(endpointUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            throw new ArgumentException($"Messaging endpoint must be an absolute https URL (got '{endpointUrl}').", nameof(endpointUrl));
+        }
+
+        builder.Resource.MessagingEndpoint = uri.ToString();
+        return builder.WithParameter("messagingEndpoint", uri.ToString());
+    }
+
+    /// <summary>
     /// Gives a sender <c>TEAMS_BOT_APP_ID</c> and <c>TEAMS_TENANT_ID</c>. With the bot on the
     /// sender's own identity, that is all it needs to mint a Bot Framework token.
     /// </summary>
@@ -117,6 +142,12 @@ public static class TeamsBotExtensions
 
     private static async Task WritePackageAsync(PipelineStepContext ctx, TeamsBotResource bot)
     {
+        if (bot.App.Conversational && bot.MessagingEndpoint is null)
+        {
+            throw new InvalidOperationException(
+                $"Bot '{bot.Name}' is conversational (teams-app.json) but has no messaging endpoint. Call WithMessagingEndpoint(...).");
+        }
+
         var botAppId = await bot.BotAppId.GetValueAsync(ctx.CancellationToken).ConfigureAwait(false);
         if (!Guid.TryParse(botAppId, out _))
         {

@@ -29,6 +29,7 @@ public sealed class TeamsAppDefinition
         BotName = Required("botName");
         ShortName = config["name"]?["short"]?.GetValue<string>() ?? throw Missing("name.short");
         FullName = config["name"]?["full"]?.GetValue<string>() ?? ShortName;
+        Conversational = config["conversational"]?.GetValue<bool>() ?? false;
     }
 
     /// <summary>The raw <c>teams-app.json</c>.</summary>
@@ -48,6 +49,12 @@ public sealed class TeamsAppDefinition
 
     /// <summary>The long name shown in the app's details.</summary>
     public string FullName { get; }
+
+    /// <summary>
+    /// <c>true</c> when people can write to the bot (<c>"conversational": true</c>).
+    /// It then needs a messaging endpoint; <c>false</c> makes it notification-only.
+    /// </summary>
+    public bool Conversational { get; }
 
     /// <summary>192×192 colour icon.</summary>
     public byte[] ColorIcon { get; }
@@ -119,9 +126,9 @@ public sealed class TeamsAppDefinition
                 {
                     ["botId"] = botAppId,
                     ["scopes"] = new JsonArray("personal"),
-                    // One-way: Teams shows no compose box, so nobody expects an
-                    // answer from a bot with no conversation logic behind it.
-                    ["isNotificationOnly"] = true,
+                    // Not conversational: one-way, Teams shows no compose box, so
+                    // nobody expects an answer from a bot with nothing behind it.
+                    ["isNotificationOnly"] = !Conversational,
                     ["supportsFiles"] = false,
                 },
             },
