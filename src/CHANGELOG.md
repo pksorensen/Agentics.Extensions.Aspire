@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.8](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.7...v0.2.8) (2026-11-16)
+
+
+### Features
+
+* **teams-bot:** conversational bots and WithMessagingEndpoint ([5f2915c](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/5f2915cd73dd3f441dc8cd9b66b1563f53d918c3))
+
 ## [0.2.7](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.6...v0.2.7) (2026-11-15)
 
 
