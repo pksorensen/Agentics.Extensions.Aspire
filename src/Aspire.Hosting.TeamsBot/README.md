@@ -61,6 +61,20 @@ cycle. The receiving app must verify the Bot Connector's JWT itself (issuer
 `https://api.botframework.com`, audience = bot app id, `serviceUrl` claim, key
 endorsement for the channel).
 
+A conversational bot can also list its commands. Teams shows them in a menu by
+the compose box, and choosing one sends its title to the bot as an ordinary
+message:
+
+```json
+"commands": [
+  { "title": "portfolio", "description": "Your portfolios with customers and projects" },
+  { "title": "team", "description": "Your team and its allocation this month" }
+]
+```
+
+At most 10 are used; a title is cut at 32 characters and a description at 128.
+Bump `version` and re-upload the package when the list changes.
+
 ## Environments
 
 Any `environment` other than empty or `prod` gets these suffixes:

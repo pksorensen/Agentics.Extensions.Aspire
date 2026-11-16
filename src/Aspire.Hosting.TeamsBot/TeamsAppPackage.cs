@@ -120,21 +120,54 @@ public sealed class TeamsAppDefinition
             ["description"] = Config["description"]?.DeepClone(),
             ["icons"] = new JsonObject { ["color"] = "color.png", ["outline"] = "outline.png" },
             ["accentColor"] = Config["accentColor"]?.GetValue<string>() ?? "#FFFFFF",
-            ["bots"] = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["botId"] = botAppId,
-                    ["scopes"] = new JsonArray("personal"),
-                    // Not conversational: one-way, Teams shows no compose box, so
-                    // nobody expects an answer from a bot with nothing behind it.
-                    ["isNotificationOnly"] = !Conversational,
-                    ["supportsFiles"] = false,
-                },
-            },
+            ["bots"] = new JsonArray { BotEntry(botAppId) },
             ["permissions"] = new JsonArray("identity"),
             ["validDomains"] = Config["validDomains"]?.DeepClone() ?? new JsonArray(),
         };
+    }
+
+    private JsonObject BotEntry(string botAppId)
+    {
+        var bot = new JsonObject
+        {
+            ["botId"] = botAppId,
+            ["scopes"] = new JsonArray("personal"),
+            // Not conversational: one-way, Teams shows no compose box, so
+            // nobody expects an answer from a bot with nothing behind it.
+            ["isNotificationOnly"] = !Conversational,
+            ["supportsFiles"] = false,
+        };
+        // The command menu Teams shows by the compose box. Only a
+        // conversational bot has a compose box to show it in.
+        if (Conversational && Config["commands"] is JsonArray commands && CommandsFor(commands) is { Count: > 0 } list)
+        {
+            bot["commandLists"] = new JsonArray(new JsonObject
+            {
+                ["scopes"] = new JsonArray("personal"),
+                ["commands"] = list,
+            });
+        }
+        return bot;
+    }
+
+    /// <summary>
+    /// <c>commands</c> from <c>teams-app.json</c> as manifest commands: at most 10,
+    /// title ≤ 32 and description ≤ 128 characters, as the schema allows.
+    /// </summary>
+    private static JsonArray CommandsFor(JsonArray commands)
+    {
+        var result = new JsonArray();
+        foreach (var command in commands.OfType<JsonObject>().Take(10))
+        {
+            var title = command["title"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(title)) continue;
+            result.Add(new JsonObject
+            {
+                ["title"] = Truncate(title, 32),
+                ["description"] = Truncate(command["description"]?.GetValue<string>() ?? title, 128),
+            });
+        }
+        return result;
     }
 
     /// <summary>Builds the zip Teams accepts: manifest and icons at the root.</summary>
