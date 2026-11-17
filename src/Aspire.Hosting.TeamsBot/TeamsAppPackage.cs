@@ -30,7 +30,14 @@ public sealed class TeamsAppDefinition
         ShortName = config["name"]?["short"]?.GetValue<string>() ?? throw Missing("name.short");
         FullName = config["name"]?["full"]?.GetValue<string>() ?? ShortName;
         Conversational = config["conversational"]?.GetValue<bool>() ?? false;
+        Scopes = ScopesFrom(config["scopes"] as JsonArray);
     }
+
+    /// <summary>
+    /// Where the app can be added, from <c>"scopes"</c> in <c>teams-app.json</c>
+    /// (default: the personal chat only). <c>WithScopes</c> in the AppHost wins.
+    /// </summary>
+    public TeamsBotScopes Scopes { get; }
 
     /// <summary>The raw <c>teams-app.json</c>.</summary>
     public JsonObject Config { get; }
@@ -101,9 +108,14 @@ public sealed class TeamsAppDefinition
         return new TeamsAppNames($"{BotName}-{env}", shortName, Truncate(FullName + suffix, 100), DeriveGuid(AppId, env));
     }
 
+    /// <summary>The placeholder <see cref="BuildManifest"/> puts where the bot id goes when
+    /// the receiving app fills it in from <c>TEAMS_BOT_APP_ID</c> at run time.</summary>
+    public const string BotAppIdPlaceholder = "${TEAMS_BOT_APP_ID}";
+
     /// <summary>Builds <c>manifest.json</c> for a bot app id and environment.</summary>
-    public JsonObject BuildManifest(string botAppId, string? environment)
+    public JsonObject BuildManifest(string botAppId, string? environment, TeamsBotScopes? scopes = null)
     {
+        var effective = scopes ?? Scopes;
         var names = NamesFor(environment);
         return new JsonObject
         {
@@ -120,18 +132,18 @@ public sealed class TeamsAppDefinition
             ["description"] = Config["description"]?.DeepClone(),
             ["icons"] = new JsonObject { ["color"] = "color.png", ["outline"] = "outline.png" },
             ["accentColor"] = Config["accentColor"]?.GetValue<string>() ?? "#FFFFFF",
-            ["bots"] = new JsonArray { BotEntry(botAppId) },
+            ["bots"] = new JsonArray { BotEntry(botAppId, effective) },
             ["permissions"] = new JsonArray("identity"),
             ["validDomains"] = Config["validDomains"]?.DeepClone() ?? new JsonArray(),
         };
     }
 
-    private JsonObject BotEntry(string botAppId)
+    private JsonObject BotEntry(string botAppId, TeamsBotScopes scopes)
     {
         var bot = new JsonObject
         {
             ["botId"] = botAppId,
-            ["scopes"] = new JsonArray("personal"),
+            ["scopes"] = ScopeNames(scopes),
             // Not conversational: one-way, Teams shows no compose box, so
             // nobody expects an answer from a bot with nothing behind it.
             ["isNotificationOnly"] = !Conversational,
@@ -143,7 +155,7 @@ public sealed class TeamsAppDefinition
         {
             bot["commandLists"] = new JsonArray(new JsonObject
             {
-                ["scopes"] = new JsonArray("personal"),
+                ["scopes"] = ScopeNames(scopes),
                 ["commands"] = list,
             });
         }
@@ -168,6 +180,31 @@ public sealed class TeamsAppDefinition
             });
         }
         return result;
+    }
+
+    /// <summary>The manifest's scope names, personal always first.</summary>
+    private static JsonArray ScopeNames(TeamsBotScopes scopes)
+    {
+        var names = new JsonArray("personal");
+        if (scopes.HasFlag(TeamsBotScopes.GroupChat)) names.Add("groupChat");
+        if (scopes.HasFlag(TeamsBotScopes.Team)) names.Add("team");
+        return names;
+    }
+
+    private static TeamsBotScopes ScopesFrom(JsonArray? names)
+    {
+        var scopes = TeamsBotScopes.Personal;
+        foreach (var name in names?.Select(node => node?.GetValue<string>()) ?? [])
+        {
+            scopes |= name switch
+            {
+                "personal" => TeamsBotScopes.Personal,
+                "groupChat" => TeamsBotScopes.GroupChat,
+                "team" => TeamsBotScopes.Team,
+                _ => throw new InvalidDataException($"teams-app.json: unknown scope '{name}' (personal, groupChat, team)."),
+            };
+        }
+        return scopes;
     }
 
     /// <summary>Builds the zip Teams accepts: manifest and icons at the root.</summary>
@@ -224,3 +261,15 @@ public sealed class TeamsAppDefinition
 
 /// <summary>Names for one environment's bot and Teams app.</summary>
 public sealed record TeamsAppNames(string BotName, string ShortName, string FullName, Guid TeamsAppId);
+
+/// <summary>Where a Teams app can be added. The personal chat is always included.</summary>
+[Flags]
+public enum TeamsBotScopes
+{
+    /// <summary>The person's own 1:1 chat with the bot.</summary>
+    Personal = 1,
+    /// <summary>Group chats, including a chat between two people. The bot hears @mentions only.</summary>
+    GroupChat = 2,
+    /// <summary>A team's channels. The bot hears @mentions only.</summary>
+    Team = 4,
+}

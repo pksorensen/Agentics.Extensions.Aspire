@@ -19,6 +19,7 @@ public sealed class TeamsBotResource : AzureBicepResource
     {
         App = app;
         Environment = environment;
+        Scopes = app.Scopes;
     }
 
     /// <summary>The Teams app definition the package is built from.</summary>
@@ -35,6 +36,10 @@ public sealed class TeamsBotResource : AzureBicepResource
 
     /// <summary>The URL Teams posts activities to, when set with <c>WithMessagingEndpoint</c>.</summary>
     public string? MessagingEndpoint { get; internal set; }
+
+    /// <summary>Where the Teams app can be added: <c>teams-app.json</c>'s <c>"scopes"</c>
+    /// unless the AppHost sets them with <c>WithScopes</c>.</summary>
+    public TeamsBotScopes Scopes { get; internal set; }
 
     /// <summary>Name of the pipeline step that writes the Teams app package.</summary>
     public string PackageStepName => $"teams-package-{Name}";
@@ -128,8 +133,38 @@ public static class TeamsBotExtensions
     }
 
     /// <summary>
+    /// Sets where the Teams app can be added: the personal chat always, plus group
+    /// chats and/or a team's channels. Overrides <c>"scopes"</c> in <c>teams-app.json</c>.
+    /// In a group chat or channel the bot only receives messages that @mention it,
+    /// and everyone there reads its answers.
+    /// </summary>
+    public static IResourceBuilder<TeamsBotResource> WithScopes(
+        this IResourceBuilder<TeamsBotResource> builder,
+        TeamsBotScopes scopes)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Resource.Scopes = scopes | TeamsBotScopes.Personal;
+        return builder;
+    }
+
+    /// <summary>Lets the app be added to group chats, a chat between two people included.</summary>
+    public static IResourceBuilder<TeamsBotResource> WithGroupChats(this IResourceBuilder<TeamsBotResource> builder) =>
+        builder.WithScopes(builder.Resource.Scopes | TeamsBotScopes.GroupChat);
+
+    /// <summary>Lets the app be added to a team, and so to its channels.</summary>
+    public static IResourceBuilder<TeamsBotResource> WithChannels(this IResourceBuilder<TeamsBotResource> builder) =>
+        builder.WithScopes(builder.Resource.Scopes | TeamsBotScopes.Team);
+
+    /// <summary>
     /// Gives a sender <c>TEAMS_BOT_APP_ID</c> and <c>TEAMS_TENANT_ID</c>. With the bot on the
     /// sender's own identity, that is all it needs to mint a Bot Framework token.
+    /// <para>
+    /// Also <c>TEAMS_APP_MANIFEST</c>: the Teams app's <c>manifest.json</c> as this
+    /// package builds it (base64 UTF-8 JSON), with <c>${TEAMS_BOT_APP_ID}</c> where the
+    /// bot id goes. An app that offers its Teams app for download zips that with the
+    /// two icons instead of building a manifest of its own, so the package people
+    /// upload is the one the AppHost describes.
+    /// </para>
     /// </summary>
     public static IResourceBuilder<T> WithTeamsBot<T>(this IResourceBuilder<T> builder, IResourceBuilder<TeamsBotResource> bot)
         where T : IResourceWithEnvironment
@@ -137,7 +172,15 @@ public static class TeamsBotExtensions
         ArgumentNullException.ThrowIfNull(bot);
         return builder
             .WithEnvironment("TEAMS_BOT_APP_ID", bot.Resource.BotAppId)
-            .WithEnvironment("TEAMS_TENANT_ID", bot.Resource.TenantId);
+            .WithEnvironment("TEAMS_TENANT_ID", bot.Resource.TenantId)
+            // A callback, so scopes set after this call still count.
+            .WithEnvironment(context =>
+            {
+                var manifest = bot.Resource.App.BuildManifest(
+                    TeamsAppDefinition.BotAppIdPlaceholder, bot.Resource.Environment, bot.Resource.Scopes);
+                context.EnvironmentVariables["TEAMS_APP_MANIFEST"] =
+                    Convert.ToBase64String(TeamsAppDefinition.ManifestBytes(manifest));
+            });
     }
 
     private static async Task WritePackageAsync(PipelineStepContext ctx, TeamsBotResource bot)
@@ -155,7 +198,7 @@ public static class TeamsBotExtensions
         }
 
         var names = bot.App.NamesFor(bot.Environment);
-        var manifest = bot.App.BuildManifest(botAppId!, bot.Environment);
+        var manifest = bot.App.BuildManifest(botAppId!, bot.Environment, bot.Scopes);
 
         var output = ctx.Services.GetRequiredService<IPipelineOutputService>().GetOutputDirectory(bot);
         Directory.CreateDirectory(output);
