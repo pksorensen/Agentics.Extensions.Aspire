@@ -63,6 +63,7 @@ public static class AzureResourceManagerEmulatorExtensions
         services.AddSingleton<AzureResourceManagerState>();
         services.RegisterArmProviderEmulator<MicrosoftAuthorizationProviderEmulator>("Microsoft.Authorization");
         services.RegisterArmProviderEmulator<MicrosoftCommunicationProviderEmulator>("Microsoft.Communication");
+        services.RegisterArmProviderEmulator<MicrosoftBotServiceProviderEmulator>("Microsoft.BotService");
         return services;
     }
 
