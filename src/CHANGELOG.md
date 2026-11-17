@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.11](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.10...v0.2.11) (2026-11-17)
+
+
+### Bug Fixes
+
+* **teams-bot:** private and shared channels ([#17](https://github.com/pksorensen/Agentics.Extensions.Aspire/issues/17)) ([1b1a677](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/1b1a677f40ba97507efc1c0d15ef873e31f89a98))
+
 ## [0.2.10](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.9...v0.2.10) (2026-11-17)
 
 
