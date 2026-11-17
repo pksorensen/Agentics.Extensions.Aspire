@@ -113,7 +113,7 @@ public sealed class TeamsAppDefinition
     public const string BotAppIdPlaceholder = "${TEAMS_BOT_APP_ID}";
 
     /// <summary>Builds <c>manifest.json</c> for a bot app id and environment.</summary>
-    public JsonObject BuildManifest(string botAppId, string? environment, TeamsBotScopes? scopes = null)
+    public JsonObject BuildManifest(string botAppId, string? environment, TeamsBotScopes? scopes = null, bool chatHistory = false)
     {
         var effective = scopes ?? Scopes;
         var names = NamesFor(environment);
@@ -141,7 +141,27 @@ public sealed class TeamsAppDefinition
         // Without it Teams offers the app in no channel but the standard ones.
         if (effective.HasFlag(TeamsBotScopes.Team))
             manifest["supportsChannelFeatures"] = "tier1";
+        // Resource-specific consent: granted per chat or team, to the bot's own
+        // identity, by whoever adds the app there.
+        if (chatHistory && ChatHistoryPermissions(effective) is { Count: > 0 } permissions)
+        {
+            manifest["webApplicationInfo"] = new JsonObject { ["id"] = botAppId, ["resource"] = "https://RscPermission" };
+            manifest["authorization"] = new JsonObject
+            {
+                ["permissions"] = new JsonObject { ["resourceSpecific"] = permissions },
+            };
+        }
         return manifest;
+    }
+
+    private static JsonArray ChatHistoryPermissions(TeamsBotScopes scopes)
+    {
+        var list = new JsonArray();
+        if (scopes.HasFlag(TeamsBotScopes.GroupChat))
+            list.Add(new JsonObject { ["name"] = "ChatMessage.Read.Chat", ["type"] = "Application" });
+        if (scopes.HasFlag(TeamsBotScopes.Team))
+            list.Add(new JsonObject { ["name"] = "ChannelMessage.Read.Group", ["type"] = "Application" });
+        return list;
     }
 
     private JsonObject BotEntry(string botAppId, TeamsBotScopes scopes)

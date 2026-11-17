@@ -41,6 +41,10 @@ public sealed class TeamsBotResource : AzureBicepResource
     /// unless the AppHost sets them with <c>WithScopes</c>.</summary>
     public TeamsBotScopes Scopes { get; internal set; }
 
+    /// <summary>Whether the bot reads every message in the group chats and channels it
+    /// is in, not only those that @mention it. Set with <c>WithChatHistory</c>.</summary>
+    public bool ReadsChatHistory { get; internal set; }
+
     /// <summary>Name of the pipeline step that writes the Teams app package.</summary>
     public string PackageStepName => $"teams-package-{Name}";
 }
@@ -156,6 +160,21 @@ public static class TeamsBotExtensions
         builder.WithScopes(builder.Resource.Scopes | TeamsBotScopes.Team);
 
     /// <summary>
+    /// Lets the bot read the group chats and channels it has been added to: Teams then
+    /// delivers every message there, not only those that @mention it, and Graph lets
+    /// the bot's identity list their history (<c>ChatMessage.Read.Chat</c>,
+    /// <c>ChannelMessage.Read.Group</c>, resource-specific consent). The chat's or
+    /// team's owner consents when the app is added or updated. The bot must still
+    /// answer only when it is @mentioned.
+    /// </summary>
+    public static IResourceBuilder<TeamsBotResource> WithChatHistory(this IResourceBuilder<TeamsBotResource> builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Resource.ReadsChatHistory = true;
+        return builder;
+    }
+
+    /// <summary>
     /// Gives a sender <c>TEAMS_BOT_APP_ID</c> and <c>TEAMS_TENANT_ID</c>. With the bot on the
     /// sender's own identity, that is all it needs to mint a Bot Framework token.
     /// <para>
@@ -177,7 +196,7 @@ public static class TeamsBotExtensions
             .WithEnvironment(context =>
             {
                 var manifest = bot.Resource.App.BuildManifest(
-                    TeamsAppDefinition.BotAppIdPlaceholder, bot.Resource.Environment, bot.Resource.Scopes);
+                    TeamsAppDefinition.BotAppIdPlaceholder, bot.Resource.Environment, bot.Resource.Scopes, bot.Resource.ReadsChatHistory);
                 context.EnvironmentVariables["TEAMS_APP_MANIFEST"] =
                     Convert.ToBase64String(TeamsAppDefinition.ManifestBytes(manifest));
             });
@@ -198,7 +217,7 @@ public static class TeamsBotExtensions
         }
 
         var names = bot.App.NamesFor(bot.Environment);
-        var manifest = bot.App.BuildManifest(botAppId!, bot.Environment, bot.Scopes);
+        var manifest = bot.App.BuildManifest(botAppId!, bot.Environment, bot.Scopes, bot.ReadsChatHistory);
 
         var output = ctx.Services.GetRequiredService<IPipelineOutputService>().GetOutputDirectory(bot);
         Directory.CreateDirectory(output);
