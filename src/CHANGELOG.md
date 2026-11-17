@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.12](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.11...v0.2.12) (2026-11-17)
+
+
+### Features
+
+* **emulators:** Bot Service provider and federated credentials ([#19](https://github.com/pksorensen/Agentics.Extensions.Aspire/issues/19)) ([863c62b](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/863c62b3b74603ddf0a60572bb7488be62bc671a))
+
 ## [0.2.11](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.10...v0.2.11) (2026-11-17)
 
 
