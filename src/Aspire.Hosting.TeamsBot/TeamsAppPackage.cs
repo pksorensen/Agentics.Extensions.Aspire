@@ -14,7 +14,7 @@ namespace Aspire.Hosting.TeamsBot;
 public sealed class TeamsAppDefinition
 {
     /// <summary>Teams manifest schema version the package is written against.</summary>
-    public const string ManifestVersion = "1.22";
+    public const string ManifestVersion = "1.25";
 
     /// <summary><c>name.short</c> is capped by the Teams manifest schema.</summary>
     public const int ShortNameMax = 30;
@@ -117,7 +117,7 @@ public sealed class TeamsAppDefinition
     {
         var effective = scopes ?? Scopes;
         var names = NamesFor(environment);
-        return new JsonObject
+        var manifest = new JsonObject
         {
             ["$schema"] = $"https://developer.microsoft.com/json-schemas/teams/v{ManifestVersion}/MicrosoftTeams.schema.json",
             ["manifestVersion"] = ManifestVersion,
@@ -136,6 +136,12 @@ public sealed class TeamsAppDefinition
             ["permissions"] = new JsonArray("identity"),
             ["validDomains"] = Config["validDomains"]?.DeepClone() ?? new JsonArray(),
         };
+        // Standard channels come with the team scope; private and shared ones
+        // only when the app declares it is ready for them (manifest 1.25+).
+        // Without it Teams offers the app in no channel but the standard ones.
+        if (effective.HasFlag(TeamsBotScopes.Team))
+            manifest["supportsChannelFeatures"] = "tier1";
+        return manifest;
     }
 
     private JsonObject BotEntry(string botAppId, TeamsBotScopes scopes)
