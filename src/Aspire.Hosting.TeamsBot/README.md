@@ -56,6 +56,10 @@ var bot = builder.AddTeamsBot("teams-bot", "teams/teams-app.json", environment)
 `WithScopes(TeamsBotScopes.Personal | TeamsBotScopes.GroupChat)` says the same in
 one call, and `"scopes": ["personal", "groupChat", "team"]` in `teams-app.json`
 is the default the AppHost starts from. The command menu follows the scopes.
+`WithChannels()` covers private and shared channels as well: the manifest then
+declares `"supportsChannelFeatures": "tier1"`, which Teams requires before it
+offers an app there. Such a channel is added to one at a time, after the app is
+in the team.
 
 In a group chat or a channel the bot only receives messages that @mention it,
 and everyone there reads its answers: an app that answers with a person's own
