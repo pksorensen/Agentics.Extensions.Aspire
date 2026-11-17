@@ -65,6 +65,17 @@ In a group chat or a channel the bot only receives messages that @mention it,
 and everyone there reads its answers: an app that answers with a person's own
 data should keep that to the personal chat (`conversation.conversationType`).
 
+## Reading the conversation
+
+`.WithChatHistory()` lets the bot read the group chats and channels it is in:
+Teams then delivers every message there, not only those that @mention it, and
+the bot's own identity can list the history through Graph
+(`GET /chats/{id}/messages`, `GET /teams/{id}/channels/{id}/messages`). The
+manifest asks for `ChatMessage.Read.Chat` and `ChannelMessage.Read.Group` as
+resource-specific consent, which the chat's or team's owner grants when the app
+is added or updated, and only for that chat or team. The bot should go on
+answering only when it is @mentioned.
+
 ## Offering the package from the app
 
 `WithTeamsBot` also gives the app `TEAMS_APP_MANIFEST`: the `manifest.json` this
