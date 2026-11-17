@@ -42,6 +42,33 @@ The file sits beside its two icons. Its paths are relative to the file itself.
 - `name.short` is the sender's name in every chat. Teams caps it at 30
   characters.
 
+## Group chats and channels
+
+The app goes in the personal chat only, unless you say otherwise:
+
+```csharp
+var bot = builder.AddTeamsBot("teams-bot", "teams/teams-app.json", environment)
+    .WithIdentity(webIdentity)
+    .WithGroupChats()   // group chats, a chat between two people included
+    .WithChannels();    // a team's channels
+```
+
+`WithScopes(TeamsBotScopes.Personal | TeamsBotScopes.GroupChat)` says the same in
+one call, and `"scopes": ["personal", "groupChat", "team"]` in `teams-app.json`
+is the default the AppHost starts from. The command menu follows the scopes.
+
+In a group chat or a channel the bot only receives messages that @mention it,
+and everyone there reads its answers: an app that answers with a person's own
+data should keep that to the personal chat (`conversation.conversationType`).
+
+## Offering the package from the app
+
+`WithTeamsBot` also gives the app `TEAMS_APP_MANIFEST`: the `manifest.json` this
+package builds (base64 UTF-8 JSON) with `${TEAMS_BOT_APP_ID}` where the bot id
+goes. An app with a "download the Teams app" link replaces the placeholder with
+`TEAMS_BOT_APP_ID` and zips it with the two icons, so the package people upload
+is the one the AppHost describes, never a second copy of these rules.
+
 ## Conversational bots
 
 By default the bot is notification-only: Teams shows no compose box. To let
