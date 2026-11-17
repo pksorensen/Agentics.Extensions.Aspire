@@ -27,7 +27,7 @@ internal static class MicrosoftTenantPortal
                         item.Id,
                         item.AppId,
                         item.DisplayName,
-                        credentials = item.PasswordKeyIds.Count,
+                        credentials = item.PasswordKeyIds.Count + item.FederatedIdentityCredentials.Count,
                     }),
                 servicePrincipals = graph.ServicePrincipals.Values
                     .OrderBy(item => item.AppId, StringComparer.OrdinalIgnoreCase)

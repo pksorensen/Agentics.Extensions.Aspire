@@ -38,6 +38,9 @@ public sealed class MicrosoftGraphState
                             DisplayName = item.DisplayName,
                         };
                         application.PasswordKeyIds.UnionWith(item.PasswordKeyIds);
+                        // Null in files written before federated credentials existed.
+                        if (item.FederatedIdentityCredentials is { } credentials)
+                            application.FederatedIdentityCredentials.AddRange(credentials);
                         Applications[application.Id] = application;
                     }
                     foreach (var item in persisted.ServicePrincipals)
@@ -79,7 +82,8 @@ public sealed class MicrosoftGraphState
             var snapshot = new PersistedGraphState(
                 _counter,
                 Applications.Values.Select(item => new PersistedGraphApplication(
-                    item.Id, item.AppId, item.DisplayName, item.PasswordKeyIds.ToArray())).ToArray(),
+                    item.Id, item.AppId, item.DisplayName, item.PasswordKeyIds.ToArray(),
+                    item.FederatedIdentityCredentialsSnapshot())).ToArray(),
                 ServicePrincipals.Values.Select(item => new PersistedGraphServicePrincipal(
                     item.Id, item.AppId, item.AccountEnabled)).ToArray());
             var temporary = _statePath + ".tmp";
@@ -93,7 +97,11 @@ public sealed class MicrosoftGraphState
         IReadOnlyList<PersistedGraphApplication> Applications,
         IReadOnlyList<PersistedGraphServicePrincipal> ServicePrincipals);
     private sealed record PersistedGraphApplication(
-        string Id, string AppId, string DisplayName, IReadOnlyList<string> PasswordKeyIds);
+        string Id,
+        string AppId,
+        string DisplayName,
+        IReadOnlyList<string> PasswordKeyIds,
+        IReadOnlyList<GraphFederatedIdentityCredential>? FederatedIdentityCredentials = null);
     private sealed record PersistedGraphServicePrincipal(string Id, string AppId, bool AccountEnabled);
 }
 
@@ -103,7 +111,22 @@ public sealed class GraphApplication
     public required string AppId { get; init; }
     public required string DisplayName { get; init; }
     public HashSet<string> PasswordKeyIds { get; } = [];
+    public List<GraphFederatedIdentityCredential> FederatedIdentityCredentials { get; } = [];
+
+    internal GraphFederatedIdentityCredential[] FederatedIdentityCredentialsSnapshot()
+    {
+        lock (FederatedIdentityCredentials) return [.. FederatedIdentityCredentials];
+    }
 }
+
+/// <summary>A federated identity credential as Graph returns it.</summary>
+public sealed record GraphFederatedIdentityCredential(
+    string Id,
+    string Name,
+    string Issuer,
+    string Subject,
+    IReadOnlyList<string> Audiences,
+    string? Description);
 
 public sealed class GraphServicePrincipal
 {
@@ -212,6 +235,56 @@ public static class MicrosoftGraphEmulatorExtensions
             return Results.NoContent();
         });
 
+        endpoints.MapGet($"{root}/applications/{{id}}/federatedIdentityCredentials", (
+            string id, MicrosoftGraphState graph) =>
+        {
+            if (!graph.Applications.TryGetValue(id, out var app))
+                return GraphNotFound("Request_ResourceNotFound", "application not found");
+            return Results.Ok(new { value = app.FederatedIdentityCredentialsSnapshot() });
+        });
+
+        // Graph refuses a second credential with the same name, and a second with the same
+        // issuer+subject pair, on one application. The emulator does both, so a caller that forgot
+        // to list-and-adopt fails here rather than first in a real tenant.
+        endpoints.MapPost($"{root}/applications/{{id}}/federatedIdentityCredentials", (
+            string id, JsonElement body, MicrosoftGraphState graph) =>
+        {
+            if (!graph.Applications.TryGetValue(id, out var app))
+                return GraphNotFound("Request_ResourceNotFound", "application not found");
+
+            var name = body.TryGetProperty("name", out var n) ? n.GetString() : null;
+            var issuer = body.TryGetProperty("issuer", out var i) ? i.GetString() : null;
+            var subject = body.TryGetProperty("subject", out var s) ? s.GetString() : null;
+            var audiences = body.TryGetProperty("audiences", out var a) && a.ValueKind == JsonValueKind.Array
+                ? a.EnumerateArray().Select(item => item.GetString() ?? "").ToArray()
+                : [];
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(issuer) ||
+                string.IsNullOrWhiteSpace(subject) || audiences.Length != 1)
+                return GraphBadRequest("name, issuer, subject and exactly one audience are required");
+
+            var credential = new GraphFederatedIdentityCredential(
+                Guid.NewGuid().ToString(),
+                name,
+                issuer,
+                subject,
+                audiences,
+                body.TryGetProperty("description", out var d) ? d.GetString() : null);
+
+            lock (app.FederatedIdentityCredentials)
+            {
+                if (app.FederatedIdentityCredentials.Any(item => item.Name == name))
+                    return GraphBadRequest($"a federated identity credential named '{name}' already exists");
+                if (app.FederatedIdentityCredentials.Any(item => item.Issuer == issuer && item.Subject == subject))
+                    return GraphBadRequest("a federated identity credential with this issuer and subject already exists");
+                if (app.FederatedIdentityCredentials.Count >= 20)
+                    return GraphBadRequest("an application can hold at most 20 federated identity credentials");
+                app.FederatedIdentityCredentials.Add(credential);
+            }
+
+            graph.Save();
+            return Results.Json(credential, statusCode: 201);
+        });
+
         endpoints.MapPatch($"{root}/servicePrincipals/{{id}}", (
             string id, JsonElement body, MicrosoftGraphState graph) =>
         {
@@ -259,4 +332,7 @@ public static class MicrosoftGraphEmulatorExtensions
 
     private static IResult GraphNotFound(string code, string message) =>
         Results.Json(new { error = new { code, message } }, statusCode: 404);
+
+    private static IResult GraphBadRequest(string message) =>
+        Results.Json(new { error = new { code = "Request_BadRequest", message } }, statusCode: 400);
 }
