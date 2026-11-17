@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.10](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.9...v0.2.10) (2026-11-17)
+
+
+### Features
+
+* **teams-bot:** group chats and channels, and the manifest handed to the app ([#15](https://github.com/pksorensen/Agentics.Extensions.Aspire/issues/15)) ([b66bb51](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/b66bb5168ada9b6f5f83f2c49d9d7d6f99dfbe40))
+
 ## [0.2.9](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.8...v0.2.9) (2026-11-16)
 
 
