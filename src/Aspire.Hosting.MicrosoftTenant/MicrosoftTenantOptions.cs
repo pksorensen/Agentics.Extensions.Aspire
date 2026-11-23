@@ -34,12 +34,44 @@ public sealed class MicrosoftTenantOptions
     /// where <see cref="HostPort"/> says.
     /// </summary>
     public string? PublicUrl { get; set; }
+
+    /// <summary>
+    /// Whether the sign-in page offers "somebody else" — an address the directory
+    /// has never seen. On by default, because "invite somebody, then be them" is a
+    /// flow worth testing. Turn it off for a demo whose picker should show the
+    /// seeded people and nobody else; the authorize endpoint then refuses unseeded
+    /// addresses too, so the list on the page is the whole directory.
+    /// </summary>
+    public bool AllowUnknownUsers { get; set; } = true;
+
+    /// <summary>
+    /// Emit <c>tid</c> on tokens even when the issuer is plain http.
+    ///
+    /// By default the claim is withheld over http to keep Auth.js from re-running
+    /// discovery against an https-only check (see MicrosoftTenantOidc.ExchangeCode).
+    /// MSAL.js has no such branch and keys its account cache on the tenant, so an
+    /// SPA client wants the claim exactly as Entra emits it.
+    /// </summary>
+    public bool AlwaysEmitTenantIdClaim { get; set; }
 }
 
+/// <summary>
+/// An app registration in the emulated tenant.
+///
+/// A null <paramref name="ClientSecret"/> together with
+/// <see cref="AllowPublicClient"/> is a public client — an SPA or a native app —
+/// which redeems codes with PKCE and no secret, the way Entra's "Single-page
+/// application" platform does.
+/// </summary>
 public sealed record MicrosoftTenantAppRegistration(
     string DisplayName,
     string ClientId,
-    string ClientSecret);
+    string? ClientSecret)
+{
+    /// <summary>Whether the token endpoint accepts this client without a secret,
+    /// for the authorization-code (PKCE required) and refresh-token grants.</summary>
+    public bool AllowPublicClient { get; init; }
+}
 
 /// <summary>
 /// A person in the emulated directory.
@@ -52,7 +84,12 @@ public sealed record MicrosoftTenantUser(
     string ObjectId,
     string DisplayName,
     string Email,
-    IReadOnlyList<string> Roles);
+    IReadOnlyList<string> Roles)
+{
+    /// <summary>Shown under the name on the sign-in page — for a demo, the part
+    /// this person plays. Not a token claim.</summary>
+    public string? JobTitle { get; init; }
+}
 
 public sealed record MicrosoftTenantSeed(
     string PrimaryDomain,
