@@ -97,4 +97,47 @@ public sealed record MicrosoftTenantSeed(
     IReadOnlyList<MicrosoftTenantAppRegistration> Applications,
     // Optional so the record stays source-compatible with callers written before
     // the tenant had users at all.
-    IReadOnlyList<MicrosoftTenantUser>? Users = null);
+    IReadOnlyList<MicrosoftTenantUser>? Users = null,
+    // Workload identities: APIs that expose app roles, managed identities that
+    // call them, and which identity holds which role. Optional for the same reason.
+    IReadOnlyList<MicrosoftTenantApiRegistration>? Apis = null,
+    IReadOnlyList<MicrosoftTenantManagedIdentity>? ManagedIdentities = null,
+    IReadOnlyList<MicrosoftTenantAppRoleAssignment>? AppRoleAssignments = null);
+
+/// <summary>
+/// An app registration that represents an API — a resource other workloads ask
+/// for tokens to. Tokens for it carry <c>aud</c> = <paramref name="ClientId"/>
+/// (Entra's v2 access-token format) and the caller's app roles in <c>roles</c>.
+///
+/// <paramref name="AssignmentRequired"/> mirrors "Assignment required?" on the
+/// enterprise app: a caller holding none of <paramref name="AppRoles"/> is refused
+/// a token, rather than given one without roles.
+/// </summary>
+public sealed record MicrosoftTenantApiRegistration(
+    string DisplayName,
+    string ClientId,
+    string AppIdUri,
+    IReadOnlyList<string> AppRoles,
+    bool AssignmentRequired = true);
+
+/// <summary>
+/// A managed identity, as an Azure resource would have one. A workload uses it
+/// through the App Service managed-identity protocol (<c>IDENTITY_ENDPOINT</c> +
+/// <c>IDENTITY_HEADER</c>), so <c>ManagedIdentityCredential</c> works unchanged.
+/// <paramref name="IdentityHeader"/> is the secret that identifies the caller as
+/// this identity.
+/// </summary>
+public sealed record MicrosoftTenantManagedIdentity(
+    string Name,
+    string ClientId,
+    string ObjectId,
+    string IdentityHeader);
+
+/// <summary>
+/// An app role assigned to a workload — a managed identity or a confidential app
+/// registration, named by its client id — on an API, named by its client id.
+/// </summary>
+public sealed record MicrosoftTenantAppRoleAssignment(
+    string PrincipalClientId,
+    string ApiClientId,
+    string Role);

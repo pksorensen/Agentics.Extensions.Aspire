@@ -73,7 +73,10 @@ public static class MicrosoftTenantHostingExtensions
                         resource.PrimaryDomain,
                         resource.TenantId,
                         resource.Applications.ToList(),
-                        resource.Users.ToList()));
+                        resource.Users.ToList(),
+                        resource.Apis.ToList(),
+                        resource.ManagedIdentities.ToList(),
+                        resource.AppRoleAssignments.ToList()));
 
                 if (resource.PublicUrl is { } publicUrl)
                     context.EnvironmentVariables["MICROSOFT_TENANT_PUBLIC_URL"] = publicUrl;

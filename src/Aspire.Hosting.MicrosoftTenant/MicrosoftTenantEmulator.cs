@@ -29,7 +29,11 @@ public sealed class MicrosoftTenantState
             configuration?["MICROSOFT_TENANT_ALWAYS_EMIT_TID"], "true", StringComparison.OrdinalIgnoreCase);
         foreach (var app in seed.Applications) _applications[app.ClientId] = app;
         foreach (var user in seed.Users ?? []) _users[user.ObjectId] = user;
+        Workloads = new WorkloadIdentities(seed);
     }
+
+    /// <summary>APIs, managed identities and their app-role assignments.</summary>
+    internal WorkloadIdentities Workloads { get; }
 
     public string PrimaryDomain { get; }
     public string TenantId { get; }
@@ -180,6 +184,7 @@ public static class MicrosoftTenantEmulatorExtensions
         endpoints.MapPost("/login/{tenantId}/oauth2/v2.0/token", IssueToken);
         endpoints.MapPost("/{tenantId}/oauth2/v2.0/token", IssueToken);
         endpoints.MapGet("/{tenantId}/oauth2/v2.0/tokeninfo", TokenInfo);
+        endpoints.MapManagedIdentityEndpoint();
         endpoints.MapOidc();
         return endpoints;
     }
@@ -212,7 +217,9 @@ public static class MicrosoftTenantEmulatorExtensions
 
         return grantType switch
         {
-            "client_credentials" => IssueApplicationToken(tenant, clientId),
+            "client_credentials" => WorkloadIdentityEndpoints.ResourceOfDefaultScope(form["scope"].ToString()) is { } resource
+                ? WorkloadIdentityEndpoints.IssueClientCredentialsJwt(request, tenant, clientId, resource)
+                : IssueApplicationToken(tenant, clientId),
             "authorization_code" => MicrosoftTenantOidc.ExchangeCode(request, form, tenant, clientId, publicRedemption),
             "refresh_token" => MicrosoftTenantOidc.ExchangeRefreshToken(request, form, tenant, clientId),
             var other => OAuthError("unsupported_grant_type", $"AADSTS70000: grant type '{other}' is not emulated"),
