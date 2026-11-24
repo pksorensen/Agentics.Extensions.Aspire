@@ -10,9 +10,13 @@
     in code (the same split CommunityToolkit.Aspire uses). Each project sets its own
     <PackageId> and <Description>.
 
-    Version: driven by version.txt for local builds (release-please bumps it on this
-    repo). CI overrides with -p:PackageVersion=<semver>, which always wins over
-    <Version> in NuGet pack.
+    Version: driven by version.txt (release-please bumps it on this repo). CI passes
+    -p:Version=<semver>, which overrides it and also stamps the assembly's
+    informational version. It must be Version, not PackageVersion: the assembly then
+    knows which release it is, and MicrosoftTenantOptions.Tag defaults to that, so
+    the hosting package pulls the emulator image published with it. Packed with
+    PackageVersion only, every assembly said 1.0.0 and a consumer asking the package
+    for its own version got an image tag that does not exist (0.2.13, 2026-11-24).
   -->
 
   <PropertyGroup>
@@ -44,7 +48,7 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
 
     <_AspireVersionRaw>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)version.txt'))</_AspireVersionRaw>
-    <Version Condition="'$(PackageVersion)' == ''">$(_AspireVersionRaw.Trim())</Version>
+    <Version>$(_AspireVersionRaw.Trim())</Version>
   </PropertyGroup>
 
   <ItemGroup>

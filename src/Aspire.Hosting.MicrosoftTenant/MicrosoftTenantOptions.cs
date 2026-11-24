@@ -3,7 +3,20 @@ namespace Aspire.Hosting.MicrosoftTenant;
 public sealed class MicrosoftTenantOptions
 {
     public string Image { get; set; } = "ghcr.io/pksorensen/microsoft-tenant-emulator";
-    public string Tag { get; set; } = "latest";
+    /// <summary>
+    /// The emulator image tag. Defaults to this package's own version, so a host
+    /// pulls the image released together with the package it compiled against and
+    /// the two cannot drift. Set it to pin something else, such as <c>latest</c>.
+    /// </summary>
+    public string Tag { get; set; } = PackageVersion;
+
+    /// <summary>The version this assembly was released as, without build metadata.</summary>
+    internal static string PackageVersion { get; } =
+        (typeof(MicrosoftTenantOptions).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+            .FirstOrDefault()?.InformationalVersion ?? "latest")
+        .Split('+')[0];
     public string? DockerfileContext { get; set; }
     public string DockerfilePath { get; set; } = "src/MicrosoftTenant.Emulator/Dockerfile";
     public bool PersistData { get; set; }
