@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.13](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.12...v0.2.13) (2026-11-24)
+
+
+### Features
+
+* **microsoft-tenant:** managed identities and app-role tokens for API registrations ([#22](https://github.com/pksorensen/Agentics.Extensions.Aspire/issues/22)) ([d624f3a](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/d624f3a0cae066eb59e31affd9498bac7cb0029a))
+
 ## [0.2.12](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.11...v0.2.12) (2026-11-17)
 
 
