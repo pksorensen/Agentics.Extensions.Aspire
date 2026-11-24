@@ -23,9 +23,17 @@ public sealed class MicrosoftTenantState
         PrimaryDomain = seed.PrimaryDomain;
         TenantId = seed.TenantId;
         PublicUrl = configuration?["MICROSOFT_TENANT_PUBLIC_URL"]?.TrimEnd('/');
+        AllowUnknownUsers = !string.Equals(
+            configuration?["MICROSOFT_TENANT_ALLOW_UNKNOWN_USERS"], "false", StringComparison.OrdinalIgnoreCase);
+        AlwaysEmitTenantIdClaim = string.Equals(
+            configuration?["MICROSOFT_TENANT_ALWAYS_EMIT_TID"], "true", StringComparison.OrdinalIgnoreCase);
         foreach (var app in seed.Applications) _applications[app.ClientId] = app;
         foreach (var user in seed.Users ?? []) _users[user.ObjectId] = user;
+        Workloads = new WorkloadIdentities(seed);
     }
+
+    /// <summary>APIs, managed identities and their app-role assignments.</summary>
+    internal WorkloadIdentities Workloads { get; }
 
     public string PrimaryDomain { get; }
     public string TenantId { get; }
@@ -34,6 +42,12 @@ public sealed class MicrosoftTenantState
     /// able to say. Null means "believe the request", which is right for a
     /// directly published port and wrong behind a rewriting proxy.</summary>
     public string? PublicUrl { get; }
+
+    /// <summary>Whether an address the directory has never seen may sign in.</summary>
+    public bool AllowUnknownUsers { get; }
+
+    /// <summary>Emit <c>tid</c> even over plain http — see MicrosoftTenantOptions.</summary>
+    public bool AlwaysEmitTenantIdClaim { get; }
 
     public IReadOnlyCollection<MicrosoftTenantAppRegistration> Applications => _applications.Values.ToArray();
     public IReadOnlyCollection<MicrosoftTenantUser> Users => _users.Values.ToArray();
@@ -50,11 +64,21 @@ public sealed class MicrosoftTenantState
 
     public bool ValidateClient(string clientId, string secret) =>
         _applications.TryGetValue(clientId, out var app) &&
+        !string.IsNullOrEmpty(app.ClientSecret) &&
+        !string.IsNullOrEmpty(secret) &&
         CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(app.ClientSecret),
             Encoding.UTF8.GetBytes(secret));
 
     public bool KnowsClient(string clientId) => _applications.ContainsKey(clientId);
+
+    /// <summary>A registration that may redeem without a secret — Entra's SPA platform.</summary>
+    public bool IsPublicClient(string clientId) =>
+        _applications.TryGetValue(clientId, out var app) && app.AllowPublicClient;
+
+    /// <summary>The registration an <c>api://{clientId}</c> audience names, if any.</summary>
+    internal MicrosoftTenantAppRegistration? FindApplication(string clientId) =>
+        _applications.TryGetValue(clientId, out var app) ? app : null;
 
     internal bool IsThisTenant(string tenantId) =>
         string.Equals(tenantId, TenantId, StringComparison.OrdinalIgnoreCase);
@@ -98,6 +122,7 @@ public sealed class MicrosoftTenantState
         var existing = _users.Values.FirstOrDefault(u =>
             string.Equals(u.Email, email, StringComparison.OrdinalIgnoreCase));
         if (existing is not null) return existing;
+        if (!AllowUnknownUsers) return null;
 
         var created = new MicrosoftTenantUser(
             ObjectIdFor(email),
@@ -159,6 +184,7 @@ public static class MicrosoftTenantEmulatorExtensions
         endpoints.MapPost("/login/{tenantId}/oauth2/v2.0/token", IssueToken);
         endpoints.MapPost("/{tenantId}/oauth2/v2.0/token", IssueToken);
         endpoints.MapGet("/{tenantId}/oauth2/v2.0/tokeninfo", TokenInfo);
+        endpoints.MapManagedIdentityEndpoint();
         endpoints.MapOidc();
         return endpoints;
     }
@@ -173,14 +199,28 @@ public static class MicrosoftTenantEmulatorExtensions
 
         var form = await request.ReadFormAsync();
         var (clientId, clientSecret) = ClientCredentials(request, form);
+        var grantType = form["grant_type"].ToString();
 
-        if (string.IsNullOrWhiteSpace(clientId) || !tenant.ValidateClient(clientId, clientSecret))
+        if (string.IsNullOrWhiteSpace(clientId))
+            return OAuthError("invalid_client", "AADSTS900144: the request body must contain client_id");
+
+        // A public client (Entra's SPA platform) sends no secret at all. It may
+        // redeem a code — PKCE is then mandatory, enforced at the exchange — and
+        // use the refresh token it got, and nothing else. A secret that *is* sent
+        // is always checked, so a confidential client cannot fall back to this.
+        var publicRedemption = string.IsNullOrEmpty(clientSecret)
+            && tenant.IsPublicClient(clientId)
+            && grantType is "authorization_code" or "refresh_token";
+
+        if (!publicRedemption && !tenant.ValidateClient(clientId, clientSecret))
             return OAuthError("invalid_client", "AADSTS7000215: invalid client secret");
 
-        return form["grant_type"].ToString() switch
+        return grantType switch
         {
-            "client_credentials" => IssueApplicationToken(tenant, clientId),
-            "authorization_code" => MicrosoftTenantOidc.ExchangeCode(request, form, tenant, clientId),
+            "client_credentials" => WorkloadIdentityEndpoints.ResourceOfDefaultScope(form["scope"].ToString()) is { } resource
+                ? WorkloadIdentityEndpoints.IssueClientCredentialsJwt(request, tenant, clientId, resource)
+                : IssueApplicationToken(tenant, clientId),
+            "authorization_code" => MicrosoftTenantOidc.ExchangeCode(request, form, tenant, clientId, publicRedemption),
             "refresh_token" => MicrosoftTenantOidc.ExchangeRefreshToken(request, form, tenant, clientId),
             var other => OAuthError("unsupported_grant_type", $"AADSTS70000: grant type '{other}' is not emulated"),
         };

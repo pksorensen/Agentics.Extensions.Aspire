@@ -23,6 +23,9 @@ public sealed class MicrosoftTenantResource : ContainerResource
 
     public IList<MicrosoftTenantAppRegistration> Applications { get; } = [];
     public IList<MicrosoftTenantUser> Users { get; } = [];
+    public IList<MicrosoftTenantApiRegistration> Apis { get; } = [];
+    public IList<MicrosoftTenantManagedIdentity> ManagedIdentities { get; } = [];
+    public IList<MicrosoftTenantAppRoleAssignment> AppRoleAssignments { get; } = [];
 
     // Feature packages put their versioned seed documents here. Keeping the
     // tenant package ignorant of Graph and ARM avoids a dependency cycle.

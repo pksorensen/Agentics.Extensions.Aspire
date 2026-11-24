@@ -71,7 +71,7 @@ public static class MicrosoftTenantOidc
             subject_types_supported = new[] { "pairwise" },
             id_token_signing_alg_values_supported = new[] { "RS256" },
             scopes_supported = new[] { "openid", "profile", "email", "offline_access" },
-            token_endpoint_auth_methods_supported = new[] { "client_secret_post", "client_secret_basic" },
+            token_endpoint_auth_methods_supported = new[] { "client_secret_post", "client_secret_basic", "none" },
             code_challenge_methods_supported = new[] { "S256", "plain" },
             claims_supported = new[]
             {
@@ -98,8 +98,20 @@ public static class MicrosoftTenantOidc
         if (string.IsNullOrWhiteSpace(clientId) || !tenant.KnowsClient(clientId))
             return OAuthError("unauthorized_client", $"AADSTS700016: application '{clientId}' not found in this tenant");
 
-        if (string.IsNullOrWhiteSpace(request.Query["redirect_uri"].ToString()))
+        var redirectUri = request.Query["redirect_uri"].ToString();
+        if (string.IsNullOrWhiteSpace(redirectUri))
             return OAuthError("invalid_request", "AADSTS900971: no redirect_uri");
+
+        // There is no session here to be silent with — every sign-in is a pick
+        // off the list — so a silent request (MSAL's hidden iframe) is answered
+        // the way Entra answers one without a session, instead of rendering a
+        // page nobody will ever see and leaving the caller to time out.
+        if (string.Equals(request.Query["prompt"].ToString(), "none", StringComparison.OrdinalIgnoreCase))
+            return RedirectWithParameters(request, redirectUri, new()
+            {
+                ["error"] = "login_required",
+                ["error_description"] = "AADSTS50058: the emulator keeps no sign-in session; an interactive sign-in is required",
+            });
 
         return Results.Content(SignInPage(tenant, request), "text/html; charset=utf-8");
     }
@@ -145,12 +157,50 @@ public static class MicrosoftTenantOidc
             Scope: query["scope"].ToString(),
             ExpiresAt: DateTimeOffset.UtcNow + CodeLifetime));
 
+        return RedirectWithParameters(request, redirectUri, new() { ["code"] = code });
+    }
+
+    /// <summary>
+    /// Send the authorization response back the way the client asked for it.
+    ///
+    /// <c>response_mode</c> matters: MSAL.js defaults to <c>fragment</c> and reads
+    /// only <c>location.hash</c> on its redirect page, so a code in the query is a
+    /// sign-in that silently never completes. <c>form_post</c> is the third mode
+    /// Entra supports; it is answered with the self-submitting form Entra uses.
+    /// </summary>
+    private static IResult RedirectWithParameters(
+        HttpRequest request,
+        string redirectUri,
+        Dictionary<string, string> parameters)
+    {
+        var state = request.Query["state"].ToString();
+        if (!string.IsNullOrEmpty(state)) parameters["state"] = state;
+
+        var mode = request.Query["response_mode"].ToString().ToLowerInvariant();
+        if (mode == "form_post")
+        {
+            var fields = string.Concat(parameters.Select(p =>
+                $"<input type=\"hidden\" name=\"{WebUtility.HtmlEncode(p.Key)}\" value=\"{WebUtility.HtmlEncode(p.Value)}\">"));
+            return Results.Content(
+                $"<!doctype html><html><body onload=\"document.forms[0].submit()\">"
+                + $"<form method=\"post\" action=\"{WebUtility.HtmlEncode(redirectUri)}\">{fields}"
+                + "<noscript><button type=\"submit\">Continue</button></noscript></form></body></html>",
+                "text/html; charset=utf-8");
+        }
+
+        var encoded = string.Join("&", parameters.Select(p =>
+            $"{WebUtility.UrlEncode(p.Key)}={WebUtility.UrlEncode(p.Value)}"));
         var destination = new UriBuilder(redirectUri);
-        var separator = string.IsNullOrEmpty(destination.Query) ? string.Empty : destination.Query.TrimStart('?') + "&";
-        var state = query["state"].ToString();
-        destination.Query = separator
-            + $"code={WebUtility.UrlEncode(code)}"
-            + (string.IsNullOrEmpty(state) ? string.Empty : $"&state={WebUtility.UrlEncode(state)}");
+
+        if (mode == "fragment")
+        {
+            destination.Fragment = encoded;
+        }
+        else
+        {
+            var existing = string.IsNullOrEmpty(destination.Query) ? string.Empty : destination.Query.TrimStart('?') + "&";
+            destination.Query = existing + encoded;
+        }
 
         return Results.Redirect(destination.Uri.ToString());
     }
@@ -163,7 +213,8 @@ public static class MicrosoftTenantOidc
         HttpRequest request,
         IFormCollection form,
         MicrosoftTenantState tenant,
-        string clientId)
+        string clientId,
+        bool publicClient = false)
     {
         var code = form["code"].ToString();
         if (!tenant.Codes.TryRedeem(code, out var grant))
@@ -176,6 +227,11 @@ public static class MicrosoftTenantOidc
         if (!string.IsNullOrEmpty(redirectUri) &&
             !string.Equals(redirectUri, grant.RedirectUri, StringComparison.OrdinalIgnoreCase))
             return OAuthError("invalid_grant", "AADSTS50011: redirect_uri does not match the one on the request");
+
+        // Entra requires PKCE of every SPA redemption; without a secret, the
+        // verifier is the only proof the redeemer is the one who asked.
+        if (publicClient && string.IsNullOrEmpty(grant.CodeChallenge))
+            return OAuthError("invalid_grant", "AADSTS9002325: Proof Key for Code Exchange is required for cross-origin authorization code redemption");
 
         if (!PkceHolds(grant, form["code_verifier"].ToString()))
             return OAuthError("invalid_grant", "AADSTS501481: the code_verifier does not match the code_challenge");
@@ -205,24 +261,12 @@ public static class MicrosoftTenantOidc
         // behaves identically to production. The deviation is scoped to the one
         // configuration where the alternative is that nothing works at all, and
         // disappears on its own the day this emulator serves TLS.
-        var emitTenantIdClaim = issuer.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+        //
+        // MSAL.js has no such branch, so a tenant that serves one sets
+        // AlwaysEmitTenantIdClaim and gets the claim over http as well.
+        var emitTenantIdClaim = EmitsTenantId(tenant, issuer);
 
-        var accessClaims = new Dictionary<string, object?>
-        {
-            ["iss"] = issuer,
-            ["aud"] = "00000003-0000-0000-c000-000000000000", // Microsoft Graph, as Entra does
-            ["sub"] = user.ObjectId,
-            ["oid"] = user.ObjectId,
-            ["appid"] = clientId,
-            ["scp"] = string.IsNullOrEmpty(grant.Scope) ? "openid profile email" : grant.Scope,
-            ["preferred_username"] = user.Email,
-            ["iat"] = now.ToUnixTimeSeconds(),
-            ["nbf"] = now.ToUnixTimeSeconds(),
-            ["exp"] = (now + TokenLifetime).ToUnixTimeSeconds(),
-        };
-        if (emitTenantIdClaim) accessClaims["tid"] = tenant.TenantId;
-
-        var accessToken = tenant.SigningKey.Sign(accessClaims);
+        var accessToken = tenant.SigningKey.Sign(AccessClaims(tenant, user, clientId, grant.Scope, issuer, now));
 
         var idClaims = new Dictionary<string, object?>
         {
@@ -255,6 +299,7 @@ public static class MicrosoftTenantOidc
             ["access_token"] = accessToken,
             ["id_token"] = tenant.SigningKey.Sign(idClaims),
         };
+        AddClientInfo(response, form, tenant, user);
         if (Scopes(grant.Scope).Contains("offline_access"))
         {
             response["refresh_token"] = tenant.RefreshTokens.Issue(new RefreshGrant(
@@ -284,31 +329,109 @@ public static class MicrosoftTenantOidc
 
         var now = DateTimeOffset.UtcNow;
         var issuer = tenant.Issuer(request);
-        var accessClaims = new Dictionary<string, object?>
+        // A refresh may ask for a different resource than the original grant did —
+        // MSAL renews an API token this way — so the requested scope wins when sent.
+        var scope = form["scope"].ToString();
+        if (string.IsNullOrWhiteSpace(scope)) scope = grant.Scope;
+
+        var accessToken = tenant.SigningKey.Sign(AccessClaims(tenant, user, clientId, scope, issuer, now));
+        tenant.Sessions[accessToken] = user.ObjectId;
+        var response = new Dictionary<string, object?>
+        {
+            ["token_type"] = "Bearer",
+            ["expires_in"] = (int)TokenLifetime.TotalSeconds,
+            ["scope"] = scope,
+            ["access_token"] = accessToken,
+        };
+        AddClientInfo(response, form, tenant, user);
+        return Results.Json(response);
+    }
+
+    private static bool EmitsTenantId(MicrosoftTenantState tenant, string issuer) =>
+        tenant.AlwaysEmitTenantIdClaim || issuer.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The claims of an access token, shaped by what it was requested for.
+    ///
+    /// Entra decides the audience from the scope: <c>api://{app}/access</c> mints
+    /// a token for that application, anything else (or nothing) one for Microsoft
+    /// Graph. A token for a seeded application carries the person's app roles and
+    /// <c>scp</c> as the bare scope names, the way an API registered in the tenant
+    /// sees them; a Graph token carries neither roles nor a custom audience.
+    /// </summary>
+    private static Dictionary<string, object?> AccessClaims(
+        MicrosoftTenantState tenant,
+        MicrosoftTenantUser user,
+        string clientId,
+        string scope,
+        string issuer,
+        DateTimeOffset now)
+    {
+        var scopes = Scopes(scope);
+        var resource = scopes
+            .Select(ResourceOf)
+            .FirstOrDefault(r => r is not null);
+
+        var claims = new Dictionary<string, object?>
         {
             ["iss"] = issuer,
-            ["aud"] = "00000003-0000-0000-c000-000000000000",
+            ["aud"] = resource ?? "00000003-0000-0000-c000-000000000000", // Microsoft Graph, as Entra does
             ["sub"] = user.ObjectId,
             ["oid"] = user.ObjectId,
             ["appid"] = clientId,
-            ["scp"] = string.IsNullOrEmpty(grant.Scope) ? "openid profile email" : grant.Scope,
+            ["azp"] = clientId,
+            ["ver"] = "2.0",
+            ["name"] = user.DisplayName,
             ["preferred_username"] = user.Email,
             ["iat"] = now.ToUnixTimeSeconds(),
             ["nbf"] = now.ToUnixTimeSeconds(),
             ["exp"] = (now + TokenLifetime).ToUnixTimeSeconds(),
         };
-        if (issuer.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            accessClaims["tid"] = tenant.TenantId;
 
-        var accessToken = tenant.SigningKey.Sign(accessClaims);
-        tenant.Sessions[accessToken] = user.ObjectId;
-        return Results.Json(new Dictionary<string, object?>
+        if (resource is null)
         {
-            ["token_type"] = "Bearer",
-            ["expires_in"] = (int)TokenLifetime.TotalSeconds,
-            ["scope"] = grant.Scope,
-            ["access_token"] = accessToken,
-        });
+            claims["scp"] = string.IsNullOrEmpty(scope) ? "openid profile email" : scope;
+        }
+        else
+        {
+            var names = scopes
+                .Where(s => string.Equals(ResourceOf(s), resource, StringComparison.OrdinalIgnoreCase))
+                .Select(s => s[(resource.Length + 1)..])
+                .Where(s => s.Length > 0 && s != ".default")
+                .ToArray();
+            if (names.Length > 0) claims["scp"] = string.Join(' ', names);
+
+            // As with the id_token: absent rather than empty when there are none.
+            if (user.Roles.Count > 0) claims["roles"] = user.Roles;
+        }
+
+        if (EmitsTenantId(tenant, issuer)) claims["tid"] = tenant.TenantId;
+        return claims;
+    }
+
+    /// <summary><c>api://x/access</c> → <c>api://x</c>; anything that is not an
+    /// application-URI scope → null.</summary>
+    private static string? ResourceOf(string scope)
+    {
+        if (!scope.StartsWith("api://", StringComparison.OrdinalIgnoreCase)) return null;
+        var slash = scope.LastIndexOf('/');
+        return slash > "api://".Length ? scope[..slash] : scope;
+    }
+
+    /// <summary>
+    /// Entra's <c>client_info</c>, sent when the client asks with
+    /// <c>client_info=1</c>: base64url JSON of the object id and tenant id. MSAL
+    /// builds its home-account id from it and only warns and guesses without it.
+    /// </summary>
+    private static void AddClientInfo(
+        Dictionary<string, object?> response,
+        IFormCollection form,
+        MicrosoftTenantState tenant,
+        MicrosoftTenantUser user)
+    {
+        if (form["client_info"].ToString() != "1") return;
+        response["client_info"] = Base64Url(JsonSerializer.SerializeToUtf8Bytes(
+            new { uid = user.ObjectId, utid = tenant.TenantId }));
     }
 
     private static HashSet<string> Scopes(string value) =>
@@ -376,7 +499,10 @@ public static class MicrosoftTenantOidc
 
     private static string SignInPage(MicrosoftTenantState tenant, HttpRequest request, string? error = null)
     {
-        var action = WebUtility.HtmlEncode($"{request.Path}{request.QueryString}");
+        // No `action` on the forms: a form without one posts to the document's own
+        // address, query included. Spelling it out from request.Path breaks as soon
+        // as a proxy in front strips a path prefix — the browser then posts to an
+        // address the proxy does not route.
         var clientId = request.Query["client_id"].ToString();
         var application = tenant.Applications.FirstOrDefault(a =>
             string.Equals(a.ClientId, clientId, StringComparison.OrdinalIgnoreCase));
@@ -391,10 +517,12 @@ public static class MicrosoftTenantOidc
         body.Append("<ul class=\"people\">");
         foreach (var user in tenant.Users.OrderBy(u => u.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
-            body.Append($"<li><form method=\"post\" action=\"{action}\">");
+            body.Append($"<li><form method=\"post\">");
             body.Append($"<input type=\"hidden\" name=\"subject\" value=\"{WebUtility.HtmlEncode(user.ObjectId)}\">");
             body.Append($"<button type=\"submit\" data-testid=\"sign-in-as\" data-email=\"{WebUtility.HtmlEncode(user.Email)}\">");
             body.Append($"<span class=\"name\">{WebUtility.HtmlEncode(user.DisplayName)}</span>");
+            if (!string.IsNullOrWhiteSpace(user.JobTitle))
+                body.Append($"<span class=\"title\" data-testid=\"sign-in-as-title\">{WebUtility.HtmlEncode(user.JobTitle)}</span>");
             body.Append($"<span class=\"email\">{WebUtility.HtmlEncode(user.Email)}</span>");
             body.Append(user.Roles.Count == 0
                 ? "<span class=\"roles none\">no directory roles</span>"
@@ -403,7 +531,9 @@ public static class MicrosoftTenantOidc
         }
         body.Append("</ul>");
 
-        body.Append($"<form method=\"post\" action=\"{action}\" class=\"other\" data-testid=\"sign-in-other\">");
+        if (!tenant.AllowUnknownUsers) return Page("Sign in", body.ToString());
+
+        body.Append($"<form method=\"post\" class=\"other\" data-testid=\"sign-in-other\">");
         body.Append("<h2>Somebody else</h2>");
         body.Append("<p>An address that is not in the directory yet signs in as a new person with a stable object id, "
                   + "so returning as the same address returns as the same identity.</p>");
@@ -447,6 +577,7 @@ public static class MicrosoftTenantOidc
             font: inherit; cursor: pointer; }
           ul.people button:hover { border-color: currentColor; }
           .name { font-weight: 600; }
+          .title { font-size: .9em; }
           .email, .roles { font-size: .85em; opacity: .7; }
           .roles.none { font-style: italic; }
           .other { border-top: 1px solid var(--line); padding-top: 1.5rem; display: grid; gap: .75rem; }

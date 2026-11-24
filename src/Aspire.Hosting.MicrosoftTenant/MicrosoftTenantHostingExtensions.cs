@@ -73,7 +73,10 @@ public static class MicrosoftTenantHostingExtensions
                         resource.PrimaryDomain,
                         resource.TenantId,
                         resource.Applications.ToList(),
-                        resource.Users.ToList()));
+                        resource.Users.ToList(),
+                        resource.Apis.ToList(),
+                        resource.ManagedIdentities.ToList(),
+                        resource.AppRoleAssignments.ToList()));
 
                 if (resource.PublicUrl is { } publicUrl)
                     context.EnvironmentVariables["MICROSOFT_TENANT_PUBLIC_URL"] = publicUrl;
@@ -83,6 +86,11 @@ public static class MicrosoftTenantHostingExtensions
                     context.EnvironmentVariables[feature.Key] = JsonSerializer.Serialize(feature.Value);
                 }
             });
+
+        if (!options.AllowUnknownUsers)
+            tenant.WithEnvironment("MICROSOFT_TENANT_ALLOW_UNKNOWN_USERS", "false");
+        if (options.AlwaysEmitTenantIdClaim)
+            tenant.WithEnvironment("MICROSOFT_TENANT_ALWAYS_EMIT_TID", "true");
 
         if (!string.IsNullOrWhiteSpace(options.DockerfileContext))
             tenant.WithDockerfile(options.DockerfileContext, options.DockerfilePath);
@@ -112,6 +120,30 @@ public static class MicrosoftTenantHostingExtensions
             throw new ArgumentException($"Application '{clientId}' is already seeded.", nameof(clientId));
 
         tenant.Resource.Applications.Add(new(displayName, clientId, clientSecret));
+        return tenant;
+    }
+
+    /// <summary>
+    /// Seeds a public client — an SPA or native app — that redeems authorization
+    /// codes with PKCE and no secret, as Entra's single-page-application platform
+    /// does. The confidential grants (client credentials, and any exchange that
+    /// would need a secret) stay closed to it.
+    /// </summary>
+    public static IResourceBuilder<MicrosoftTenantResource> AddPublicAppRegistration(
+        this IResourceBuilder<MicrosoftTenantResource> tenant,
+        string displayName,
+        string clientId)
+    {
+        ArgumentNullException.ThrowIfNull(tenant);
+        ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
+
+        if (!Guid.TryParse(clientId, out _))
+            throw new ArgumentException("An application client id must be a GUID.", nameof(clientId));
+        if (tenant.Resource.Applications.Any(app => app.ClientId == clientId))
+            throw new ArgumentException($"Application '{clientId}' is already seeded.", nameof(clientId));
+
+        tenant.Resource.Applications.Add(new(displayName, clientId, null) { AllowPublicClient = true });
         return tenant;
     }
 
@@ -146,6 +178,27 @@ public static class MicrosoftTenantHostingExtensions
             email,
             roles));
 
+        return tenant;
+    }
+
+    /// <summary>
+    /// Seeds a person with a job title, which the sign-in page shows under their
+    /// name. Meant for demos, where who you sign in as is a part in a story ("the
+    /// IT manager") rather than a test fixture.
+    /// </summary>
+    public static IResourceBuilder<MicrosoftTenantResource> AddUser(
+        this IResourceBuilder<MicrosoftTenantResource> tenant,
+        string email,
+        string displayName,
+        string jobTitle,
+        IReadOnlyList<string> roles)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(jobTitle);
+        ArgumentNullException.ThrowIfNull(roles);
+
+        tenant.AddUser(email, displayName, [.. roles]);
+        var index = tenant.Resource.Users.Count - 1;
+        tenant.Resource.Users[index] = tenant.Resource.Users[index] with { JobTitle = jobTitle };
         return tenant;
     }
 

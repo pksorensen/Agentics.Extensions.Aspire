@@ -34,12 +34,44 @@ public sealed class MicrosoftTenantOptions
     /// where <see cref="HostPort"/> says.
     /// </summary>
     public string? PublicUrl { get; set; }
+
+    /// <summary>
+    /// Whether the sign-in page offers "somebody else" — an address the directory
+    /// has never seen. On by default, because "invite somebody, then be them" is a
+    /// flow worth testing. Turn it off for a demo whose picker should show the
+    /// seeded people and nobody else; the authorize endpoint then refuses unseeded
+    /// addresses too, so the list on the page is the whole directory.
+    /// </summary>
+    public bool AllowUnknownUsers { get; set; } = true;
+
+    /// <summary>
+    /// Emit <c>tid</c> on tokens even when the issuer is plain http.
+    ///
+    /// By default the claim is withheld over http to keep Auth.js from re-running
+    /// discovery against an https-only check (see MicrosoftTenantOidc.ExchangeCode).
+    /// MSAL.js has no such branch and keys its account cache on the tenant, so an
+    /// SPA client wants the claim exactly as Entra emits it.
+    /// </summary>
+    public bool AlwaysEmitTenantIdClaim { get; set; }
 }
 
+/// <summary>
+/// An app registration in the emulated tenant.
+///
+/// A null <paramref name="ClientSecret"/> together with
+/// <see cref="AllowPublicClient"/> is a public client — an SPA or a native app —
+/// which redeems codes with PKCE and no secret, the way Entra's "Single-page
+/// application" platform does.
+/// </summary>
 public sealed record MicrosoftTenantAppRegistration(
     string DisplayName,
     string ClientId,
-    string ClientSecret);
+    string? ClientSecret)
+{
+    /// <summary>Whether the token endpoint accepts this client without a secret,
+    /// for the authorization-code (PKCE required) and refresh-token grants.</summary>
+    public bool AllowPublicClient { get; init; }
+}
 
 /// <summary>
 /// A person in the emulated directory.
@@ -52,7 +84,12 @@ public sealed record MicrosoftTenantUser(
     string ObjectId,
     string DisplayName,
     string Email,
-    IReadOnlyList<string> Roles);
+    IReadOnlyList<string> Roles)
+{
+    /// <summary>Shown under the name on the sign-in page — for a demo, the part
+    /// this person plays. Not a token claim.</summary>
+    public string? JobTitle { get; init; }
+}
 
 public sealed record MicrosoftTenantSeed(
     string PrimaryDomain,
@@ -60,4 +97,47 @@ public sealed record MicrosoftTenantSeed(
     IReadOnlyList<MicrosoftTenantAppRegistration> Applications,
     // Optional so the record stays source-compatible with callers written before
     // the tenant had users at all.
-    IReadOnlyList<MicrosoftTenantUser>? Users = null);
+    IReadOnlyList<MicrosoftTenantUser>? Users = null,
+    // Workload identities: APIs that expose app roles, managed identities that
+    // call them, and which identity holds which role. Optional for the same reason.
+    IReadOnlyList<MicrosoftTenantApiRegistration>? Apis = null,
+    IReadOnlyList<MicrosoftTenantManagedIdentity>? ManagedIdentities = null,
+    IReadOnlyList<MicrosoftTenantAppRoleAssignment>? AppRoleAssignments = null);
+
+/// <summary>
+/// An app registration that represents an API — a resource other workloads ask
+/// for tokens to. Tokens for it carry <c>aud</c> = <paramref name="ClientId"/>
+/// (Entra's v2 access-token format) and the caller's app roles in <c>roles</c>.
+///
+/// <paramref name="AssignmentRequired"/> mirrors "Assignment required?" on the
+/// enterprise app: a caller holding none of <paramref name="AppRoles"/> is refused
+/// a token, rather than given one without roles.
+/// </summary>
+public sealed record MicrosoftTenantApiRegistration(
+    string DisplayName,
+    string ClientId,
+    string AppIdUri,
+    IReadOnlyList<string> AppRoles,
+    bool AssignmentRequired = true);
+
+/// <summary>
+/// A managed identity, as an Azure resource would have one. A workload uses it
+/// through the App Service managed-identity protocol (<c>IDENTITY_ENDPOINT</c> +
+/// <c>IDENTITY_HEADER</c>), so <c>ManagedIdentityCredential</c> works unchanged.
+/// <paramref name="IdentityHeader"/> is the secret that identifies the caller as
+/// this identity.
+/// </summary>
+public sealed record MicrosoftTenantManagedIdentity(
+    string Name,
+    string ClientId,
+    string ObjectId,
+    string IdentityHeader);
+
+/// <summary>
+/// An app role assigned to a workload — a managed identity or a confidential app
+/// registration, named by its client id — on an API, named by its client id.
+/// </summary>
+public sealed record MicrosoftTenantAppRoleAssignment(
+    string PrincipalClientId,
+    string ApiClientId,
+    string Role);
