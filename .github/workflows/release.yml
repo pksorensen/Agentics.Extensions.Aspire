@@ -96,7 +96,7 @@ jobs:
             dotnet pack "$proj" \
               --configuration Release \
               --output ./packages \
-              -p:PackageVersion=${{ steps.ver.outputs.version }}
+              -p:Version=${{ steps.ver.outputs.version }}
           done
           ls -la packages
 
