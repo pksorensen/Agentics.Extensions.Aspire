@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.14](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.13...v0.2.14) (2026-11-24)
+
+
+### Bug Fixes
+
+* **microsoft-tenant:** the emulator image tag follows the package version ([#24](https://github.com/pksorensen/Agentics.Extensions.Aspire/issues/24)) ([9bb25c2](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/9bb25c2451a909f84f4128eec3aed48aaa6d0d8c))
+
 ## [0.2.13](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.12...v0.2.13) (2026-11-24)
 
 
