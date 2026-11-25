@@ -129,6 +129,23 @@ So demo and prod can live side by side in the tenant's app catalog. If the
 suffix would push the short name past 30 characters, the environment appears
 in the full name only.
 
+### Your own name
+
+`WithName` names the Teams app outright, replacing `teams-app.json`'s name and
+the environment suffix, for example so people can tell a demo bot from
+production at a glance:
+
+```csharp
+var bot = builder.AddTeamsBot("teams-bot", "teams/teams-app.json", environment);
+if (environment != "prod")
+    bot.WithName("Kant DEMO", "Kant DEMO — test environment");
+```
+
+The short name is at most 30 characters and the full name at most 100; the
+full name defaults to the short one. The bot's Azure name and the Teams app id
+still follow the environment, so both apps keep living side by side. Bump
+`version` and re-upload the package after a rename.
+
 ## Pipeline
 
 | Step | Runs after | Does |
