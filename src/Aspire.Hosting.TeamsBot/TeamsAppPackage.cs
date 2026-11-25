@@ -113,10 +113,10 @@ public sealed class TeamsAppDefinition
     public const string BotAppIdPlaceholder = "${TEAMS_BOT_APP_ID}";
 
     /// <summary>Builds <c>manifest.json</c> for a bot app id and environment.</summary>
-    public JsonObject BuildManifest(string botAppId, string? environment, TeamsBotScopes? scopes = null, bool chatHistory = false)
+    public JsonObject BuildManifest(string botAppId, string? environment, TeamsBotScopes? scopes = null, bool chatHistory = false, TeamsAppNames? names = null)
     {
         var effective = scopes ?? Scopes;
-        var names = NamesFor(environment);
+        names ??= NamesFor(environment);
         var manifest = new JsonObject
         {
             ["$schema"] = $"https://developer.microsoft.com/json-schemas/teams/v{ManifestVersion}/MicrosoftTeams.schema.json",

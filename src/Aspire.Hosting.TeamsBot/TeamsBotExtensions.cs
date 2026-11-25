@@ -45,6 +45,26 @@ public sealed class TeamsBotResource : AzureBicepResource
     /// is in, not only those that @mention it. Set with <c>WithChatHistory</c>.</summary>
     public bool ReadsChatHistory { get; internal set; }
 
+    /// <summary>The sender name set with <c>WithName</c>, replacing <c>teams-app.json</c>'s
+    /// (and the environment suffix) for this bot only.</summary>
+    public string? ShortNameOverride { get; internal set; }
+
+    /// <summary>The long name set with <c>WithName</c>.</summary>
+    public string? FullNameOverride { get; internal set; }
+
+    /// <summary>The names this bot's Teams app gets: the environment's, with any
+    /// <c>WithName</c> override on top. Bot name and Teams app id are never overridden.</summary>
+    public TeamsAppNames Names
+    {
+        get
+        {
+            var names = App.NamesFor(Environment);
+            return ShortNameOverride is null
+                ? names
+                : names with { ShortName = ShortNameOverride, FullName = FullNameOverride ?? ShortNameOverride };
+        }
+    }
+
     /// <summary>Name of the pipeline step that writes the Teams app package.</summary>
     public string PackageStepName => $"teams-package-{Name}";
 }
@@ -151,6 +171,28 @@ public static class TeamsBotExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Names the Teams app outright, instead of <c>teams-app.json</c>'s name plus the
+    /// environment suffix — for example a demo bot people must tell apart from production
+    /// at a glance. <paramref name="shortName"/> is the sender in every chat (at most 30
+    /// characters); <paramref name="fullName"/> defaults to it (at most 100). The bot's
+    /// Azure name and the Teams app id still follow the environment, so the two apps keep
+    /// living side by side. Bump <c>version</c> and re-upload the package after a rename.
+    /// </summary>
+    public static IResourceBuilder<TeamsBotResource> WithName(
+        this IResourceBuilder<TeamsBotResource> builder, string shortName, string? fullName = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(shortName);
+        if (shortName.Length > TeamsAppDefinition.ShortNameMax)
+            throw new ArgumentException($"A Teams short name is at most {TeamsAppDefinition.ShortNameMax} characters ('{shortName}' is {shortName.Length}).", nameof(shortName));
+        if (fullName is { Length: > 100 })
+            throw new ArgumentException($"A Teams full name is at most 100 characters.", nameof(fullName));
+        builder.Resource.ShortNameOverride = shortName;
+        builder.Resource.FullNameOverride = string.IsNullOrWhiteSpace(fullName) ? null : fullName;
+        return builder;
+    }
+
     /// <summary>Lets the app be added to group chats, a chat between two people included.</summary>
     public static IResourceBuilder<TeamsBotResource> WithGroupChats(this IResourceBuilder<TeamsBotResource> builder) =>
         builder.WithScopes(builder.Resource.Scopes | TeamsBotScopes.GroupChat);
@@ -196,7 +238,7 @@ public static class TeamsBotExtensions
             .WithEnvironment(context =>
             {
                 var manifest = bot.Resource.App.BuildManifest(
-                    TeamsAppDefinition.BotAppIdPlaceholder, bot.Resource.Environment, bot.Resource.Scopes, bot.Resource.ReadsChatHistory);
+                    TeamsAppDefinition.BotAppIdPlaceholder, bot.Resource.Environment, bot.Resource.Scopes, bot.Resource.ReadsChatHistory, bot.Resource.Names);
                 context.EnvironmentVariables["TEAMS_APP_MANIFEST"] =
                     Convert.ToBase64String(TeamsAppDefinition.ManifestBytes(manifest));
             });
@@ -216,8 +258,8 @@ public static class TeamsBotExtensions
             throw new InvalidOperationException($"Bot '{bot.Name}' has no app id after provisioning (got '{botAppId}').");
         }
 
-        var names = bot.App.NamesFor(bot.Environment);
-        var manifest = bot.App.BuildManifest(botAppId!, bot.Environment, bot.Scopes, bot.ReadsChatHistory);
+        var names = bot.Names;
+        var manifest = bot.App.BuildManifest(botAppId!, bot.Environment, bot.Scopes, bot.ReadsChatHistory, names);
 
         var output = ctx.Services.GetRequiredService<IPipelineOutputService>().GetOutputDirectory(bot);
         Directory.CreateDirectory(output);
