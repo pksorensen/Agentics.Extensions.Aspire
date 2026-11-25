@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.15](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.14...v0.2.15) (2026-11-25)
+
+
+### Features
+
+* **teams-bot:** WithName — name the Teams app outright ([#26](https://github.com/pksorensen/Agentics.Extensions.Aspire/issues/26)) ([5c3d00a](https://github.com/pksorensen/Agentics.Extensions.Aspire/commit/5c3d00a90b0497c12e89da208719834fc7529510))
+
 ## [0.2.14](https://github.com/pksorensen/Agentics.Extensions.Aspire/compare/v0.2.13...v0.2.14) (2026-11-24)
 
 
